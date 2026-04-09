@@ -438,9 +438,9 @@ ui <- fluidPage(
         --nuees-shadow: rgba(34, 45, 41, 0.18);
         --card-width: 100px;
         --card-height: 140px;
-        --tableau-face-down-overlap: 10px;
-        --tableau-face-up-overlap: 20px;
-        --tableau-gap: 10px;
+        --tableau-face-down-overlap: 4px;
+        --tableau-face-up-overlap: 22px;
+        --tableau-gap: 12px;
       }
       * { box-sizing: border-box; }
       html, body { min-height: 100%; }
@@ -512,16 +512,18 @@ ui <- fluidPage(
       .btn:hover { background: #fffdf9 !important; }
       .board-row {
         display:flex;
-        gap:14px;
         align-items:flex-start;
         justify-content:space-between;
-        margin-bottom:16px;
-        flex-wrap:wrap;
+        gap:24px;
+        margin-bottom:18px;
+        flex-wrap:nowrap;
       }
       .left-group, .right-group {
         display:flex;
+        flex-direction:row;
+        align-items:flex-start;
         gap:12px;
-        flex-wrap:wrap;
+        flex-wrap:nowrap;
       }
       .tableau-row {
         display:flex;
@@ -536,6 +538,10 @@ ui <- fluidPage(
         width: var(--card-width);
         min-width: var(--card-width);
         min-height: var(--card-height);
+      }
+      .top-pile-slot {
+        width: var(--card-width);
+        min-width: var(--card-width);
       }
       .card, .foundation-empty, .tableau-empty {
         width: var(--card-width);
@@ -624,6 +630,9 @@ ui <- fluidPage(
       }
       .tableau-card-wrap.first-card { margin-top: 0; }
       .tableau-card-wrap.face-down-card { margin-top: var(--tableau-face-down-overlap); }
+      .tableau-card-wrap.face-down-card .card {
+        box-shadow: 0 4px 10px rgba(50,60,50,0.14);
+      }
       .tableau-title {
         margin: 8px 0 10px;
         font-variant: small-caps;
@@ -640,9 +649,9 @@ ui <- fluidPage(
         :root {
           --card-width: 104px;
           --card-height: 146px;
-          --tableau-face-down-overlap: 10px;
-          --tableau-face-up-overlap: 18px;
-          --tableau-gap: 10px;
+          --tableau-face-down-overlap: 4px;
+          --tableau-face-up-overlap: 20px;
+          --tableau-gap: 12px;
         }
       }
 
@@ -650,9 +659,9 @@ ui <- fluidPage(
         :root {
           --card-width: 112px;
           --card-height: 157px;
-          --tableau-face-down-overlap: 10px;
-          --tableau-face-up-overlap: 18px;
-          --tableau-gap: 12px;
+          --tableau-face-down-overlap: 4px;
+          --tableau-face-up-overlap: 20px;
+          --tableau-gap: 14px;
         }
       }
 
@@ -660,8 +669,8 @@ ui <- fluidPage(
         :root {
           --card-width: 78px;
           --card-height: 109px;
-          --tableau-face-down-overlap: 8px;
-          --tableau-face-up-overlap: 14px;
+          --tableau-face-down-overlap: 3px;
+          --tableau-face-up-overlap: 16px;
           --tableau-gap: 8px;
         }
 
@@ -709,10 +718,14 @@ ui <- fluidPage(
         .board-row {
           justify-content: space-between;
           gap: 10px;
+          flex-wrap: nowrap;
+          overflow-x: auto;
+          padding-bottom: 4px;
         }
 
         .left-group, .right-group {
           gap: 8px;
+          flex-wrap: nowrap;
         }
 
         .foundation-empty, .tableau-empty, .recycle {
@@ -805,9 +818,16 @@ ui <- fluidPage(
           div(class = "statusbox", textOutput("status", inline = TRUE))
       ),
       div(class = "board-row",
-          div(class = "left-group", uiOutput("stock_ui"), uiOutput("waste_ui")),
+          div(class = "left-group",
+              div(class = "top-pile-slot", uiOutput("stock_ui")),
+              div(class = "top-pile-slot", uiOutput("waste_ui"))
+          ),
           div(class = "right-group",
-              uiOutput("foundation_S"), uiOutput("foundation_H"), uiOutput("foundation_D"), uiOutput("foundation_C"))
+              div(class = "top-pile-slot", uiOutput("foundation_S")),
+              div(class = "top-pile-slot", uiOutput("foundation_H")),
+              div(class = "top-pile-slot", uiOutput("foundation_D")),
+              div(class = "top-pile-slot", uiOutput("foundation_C"))
+          )
       ),
       div(class = "tableau-title", "Tableau"),
       div(class = "tableau-row",
