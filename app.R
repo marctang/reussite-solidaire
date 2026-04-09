@@ -107,14 +107,22 @@ if (dir.exists("cards") && !dir.exists("www/cards")) {
   addResourcePath("cards", "cards")
 }
 
-card_asset_exists <- function(card_id) {
-  file.exists(file.path("www", "cards", paste0(card_id, ".png"))) ||
-    file.exists(file.path("cards", paste0(card_id, ".png")))
+card_extensions <- c("png", "jpg", "jpeg")
+
+find_card_asset <- function(card_id) {
+  for (ext in card_extensions) {
+    rel <- paste0("cards/", card_id, ".", ext)
+    if (file.exists(file.path("www", rel)) || file.exists(rel)) return(rel)
+  }
+  NULL
 }
 
-back_asset_exists <- function() {
-  file.exists(file.path("www", "cards", "back.png")) ||
-    file.exists(file.path("cards", "back.png"))
+find_back_asset <- function() {
+  for (ext in card_extensions) {
+    rel <- paste0("cards/back.", ext)
+    if (file.exists(file.path("www", rel)) || file.exists(rel)) return(rel)
+  }
+  NULL
 }
 
 card_label <- function(card_id) {
@@ -166,14 +174,16 @@ card_div <- function(card_id = NULL, face_up = TRUE, clickable = FALSE, click_va
   }
 
   if (!face_up) {
-    if (back_asset_exists()) {
-      return(do.call(div, c(attrs, list(img(src = "cards/back.png", class = "card-img")))))
+    back_asset <- find_back_asset()
+    if (!is.null(back_asset)) {
+      return(do.call(div, c(attrs, list(img(src = back_asset, class = "card-img")))))
     }
     return(do.call(div, c(attrs, list(div(class = "fallback-back", "✶")))))
   }
 
-  if (card_asset_exists(card_id)) {
-    return(do.call(div, c(attrs, list(img(src = paste0("cards/", card_id, ".png"), class = "card-img")))))
+  card_asset <- find_card_asset(card_id)
+  if (!is.null(card_asset)) {
+    return(do.call(div, c(attrs, list(img(src = card_asset, class = "card-img")))))
   }
 
   card <- get_card(card_id, deck)
@@ -265,9 +275,16 @@ render_tableau_col <- function(state, col_index) {
       if (state$selected$col == col_index && i >= state$selected$idx) sel <- TRUE
     }
 
+    overlap_class <- if (i == 1) {
+      "first-card"
+    } else if (is_up) {
+      "face-up-card"
+    } else {
+      "face-down-card"
+    }
+
     div(
-      class = "tableau-card-wrap",
-      style = sprintf("margin-top:%spx;", if (i == 1) 0 else 28),
+      class = paste("tableau-card-wrap", overlap_class),
       card_div(
         card_id = id,
         face_up = is_up,
@@ -408,6 +425,7 @@ apply_drag_move <- function(st, source, target) {
 
 ui <- fluidPage(
   tags$head(
+    tags$meta(name = "viewport", content = "width=device-width, initial-scale=1, viewport-fit=cover"),
     tags$style(HTML(" 
       :root {
         --nuees-cream: #f5efe4;
@@ -418,28 +436,42 @@ ui <- fluidPage(
         --nuees-rust: #b56b5c;
         --nuees-gold: #d0b173;
         --nuees-shadow: rgba(34, 45, 41, 0.18);
+        --card-width: 100px;
+        --card-height: 140px;
+        --tableau-face-down-overlap: 10px;
+        --tableau-face-up-overlap: 20px;
+        --tableau-gap: 10px;
       }
+      * { box-sizing: border-box; }
+      html, body { min-height: 100%; }
       body {
         background:
           radial-gradient(circle at top left, rgba(255,255,255,0.30), transparent 30%),
           linear-gradient(180deg, #d7dfcf 0%, #c7d1bc 30%, #9dae8d 100%);
         color: var(--nuees-ink);
         font-family: Georgia, 'Times New Roman', serif;
+        touch-action: manipulation;
       }
       .container-fluid {
         max-width: 1320px;
-        padding-top: 18px;
-        padding-bottom: 40px;
+        padding-top: 12px;
+        padding-bottom: 24px;
+        padding-left: 10px;
+        padding-right: 10px;
       }
       .app-shell {
         background: rgba(251,247,240,0.50);
         border: 1px solid rgba(255,255,255,0.6);
         box-shadow: 0 18px 40px var(--nuees-shadow);
         border-radius: 28px;
-        padding: 20px 22px 28px;
+        padding: 14px 14px 20px;
         backdrop-filter: blur(4px);
       }
       h2, h4 { color: var(--nuees-ink); }
+      h2 {
+        font-size: clamp(1.5rem, 2.4vw, 2.15rem);
+        margin-top: 0;
+      }
       .subtitle {
         color: #56655d;
         font-style: italic;
@@ -456,10 +488,19 @@ ui <- fluidPage(
       .help { padding: 14px 16px; margin-bottom: 16px; }
       .statusbox { padding: 12px 16px; min-width: 280px; }
       .topbar {
-        display:flex; gap:12px; align-items:center; justify-content:space-between;
-        margin-bottom:18px; flex-wrap:wrap;
+        display:flex;
+        gap:12px;
+        align-items:center;
+        justify-content:space-between;
+        margin-bottom:18px;
+        flex-wrap:wrap;
       }
-      .controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+      .controls {
+        display:flex;
+        gap:10px;
+        align-items:center;
+        flex-wrap:wrap;
+      }
       .btn, .btn-default, .btn-primary {
         background: var(--nuees-paper) !important;
         color: var(--nuees-ink) !important;
@@ -469,18 +510,50 @@ ui <- fluidPage(
         box-shadow: 0 4px 14px rgba(80,90,70,0.10);
       }
       .btn:hover { background: #fffdf9 !important; }
-      .board-row { display:flex; gap:20px; align-items:flex-start; margin-bottom:20px; flex-wrap:wrap; }
-      .left-group, .right-group { display:flex; gap:18px; flex-wrap:wrap; }
-      .tableau-row { display:flex; gap:18px; align-items:flex-start; overflow-x:auto; padding-bottom:10px; }
-      .tableau-col { width:118px; min-width:118px; min-height:166px; }
+      .board-row {
+        display:flex;
+        gap:14px;
+        align-items:flex-start;
+        justify-content:space-between;
+        margin-bottom:16px;
+        flex-wrap:wrap;
+      }
+      .left-group, .right-group {
+        display:flex;
+        gap:12px;
+        flex-wrap:wrap;
+      }
+      .tableau-row {
+        display:flex;
+        gap:var(--tableau-gap);
+        align-items:flex-start;
+        overflow-x:auto;
+        overflow-y:visible;
+        padding-bottom:10px;
+        -webkit-overflow-scrolling: touch;
+      }
+      .tableau-col {
+        width: var(--card-width);
+        min-width: var(--card-width);
+        min-height: var(--card-height);
+      }
       .card, .foundation-empty, .tableau-empty {
-        width:118px; height:165px; border-radius:18px; background: var(--nuees-paper);
-        border: 1px solid rgba(71, 88, 72, 0.16); box-shadow: 0 10px 18px var(--nuees-shadow);
-        position:relative; cursor:pointer; user-select:none; overflow:hidden;
+        width: var(--card-width);
+        height: var(--card-height);
+        border-radius: 14px;
+        background: var(--nuees-paper);
+        border: 1px solid rgba(71, 88, 72, 0.16);
+        box-shadow: 0 10px 18px var(--nuees-shadow);
+        position:relative;
+        cursor:pointer;
+        user-select:none;
+        overflow:hidden;
         transition: transform .12s ease, box-shadow .12s ease, outline-color .12s ease;
       }
       .card::after {
-        content:''; position:absolute; inset:0;
+        content:'';
+        position:absolute;
+        inset:0;
         background: linear-gradient(180deg, rgba(255,255,255,0.34), transparent 16%, transparent 84%, rgba(181,107,92,0.06));
         pointer-events:none;
       }
@@ -497,13 +570,20 @@ ui <- fluidPage(
         box-shadow: none;
       }
       .foundation-empty, .tableau-empty, .recycle {
-        display:flex; align-items:center; justify-content:center; font-size:38px; color:#66735f;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        font-size:36px;
+        color:#66735f;
       }
       .card-back {
         background: linear-gradient(135deg, #a1b091, #6c8162 55%, #506b57 100%);
       }
       .card-back::before {
-        content:''; position:absolute; inset:12px; border-radius:12px;
+        content:'';
+        position:absolute;
+        inset:12px;
+        border-radius:12px;
         border: 1px solid rgba(255,255,255,0.35);
         background:
           radial-gradient(circle at 25% 30%, rgba(255,255,255,.20), transparent 18%),
@@ -511,23 +591,160 @@ ui <- fluidPage(
           linear-gradient(45deg, rgba(255,255,255,.08) 25%, transparent 25%, transparent 50%, rgba(255,255,255,.08) 50%, rgba(255,255,255,.08) 75%, transparent 75%);
         background-size: auto, auto, 22px 22px;
       }
-      .card-img { width:100%; height:100%; object-fit:cover; display:block; }
-      .fallback-back { width:100%; height:100%; display:flex; align-items:center; justify-content:center; font-size:48px; color:white; }
-      .fallback-rank { position:absolute; font-weight:700; font-size:18px; z-index:1; }
+      .card-img {
+        width:100%;
+        height:100%;
+        object-fit: cover;
+        display:block;
+      }
+      .fallback-back {
+        width:100%;
+        height:100%;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        font-size:48px;
+        color:white;
+      }
+      .fallback-rank { position:absolute; font-weight:700; font-size:16px; z-index:1; }
       .fallback-rank.tl { top:9px; left:10px; }
       .fallback-rank.br { bottom:9px; right:10px; transform: rotate(180deg); }
-      .fallback-center { position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); font-size:28px; font-weight:700; z-index:1; }
-      .tableau-card-wrap { position: relative; }
-      .tableau-title { margin: 8px 0 10px; font-variant: small-caps; letter-spacing: .04em; color: #4e5d56; }
-      .footer-note { margin-top: 18px; color: #5e6b65; font-size: 0.95em; }
+      .fallback-center {
+        position:absolute;
+        top:50%;
+        left:50%;
+        transform:translate(-50%, -50%);
+        font-size:24px;
+        font-weight:700;
+        z-index:1;
+      }
+      .tableau-card-wrap {
+        position: relative;
+        margin-top: var(--tableau-face-up-overlap);
+      }
+      .tableau-card-wrap.first-card { margin-top: 0; }
+      .tableau-card-wrap.face-down-card { margin-top: var(--tableau-face-down-overlap); }
+      .tableau-title {
+        margin: 8px 0 10px;
+        font-variant: small-caps;
+        letter-spacing: .04em;
+        color: #4e5d56;
+      }
+      .footer-note {
+        margin-top: 18px;
+        color: #5e6b65;
+        font-size: 0.95em;
+      }
+
+      @media (min-width: 900px) {
+        :root {
+          --card-width: 104px;
+          --card-height: 146px;
+          --tableau-face-down-overlap: 10px;
+          --tableau-face-up-overlap: 18px;
+          --tableau-gap: 10px;
+        }
+      }
+
+      @media (min-width: 1200px) {
+        :root {
+          --card-width: 112px;
+          --card-height: 157px;
+          --tableau-face-down-overlap: 10px;
+          --tableau-face-up-overlap: 18px;
+          --tableau-gap: 12px;
+        }
+      }
+
+      @media (max-width: 768px) {
+        :root {
+          --card-width: 78px;
+          --card-height: 109px;
+          --tableau-face-down-overlap: 8px;
+          --tableau-face-up-overlap: 14px;
+          --tableau-gap: 8px;
+        }
+
+        .container-fluid {
+          padding-top: 8px;
+          padding-bottom: 16px;
+          padding-left: 6px;
+          padding-right: 6px;
+        }
+
+        .app-shell {
+          padding: 12px 10px 16px;
+          border-radius: 18px;
+        }
+
+        .subtitle,
+        .help,
+        .footer-note,
+        .statusbox {
+          font-size: 0.95rem;
+        }
+
+        .topbar {
+          flex-direction: column;
+          align-items: stretch;
+          gap: 10px;
+        }
+
+        .controls {
+          width: 100%;
+          justify-content: space-between;
+        }
+
+        .btn, .btn-default, .btn-primary {
+          flex: 1 1 auto;
+          min-height: 44px;
+          padding: 10px 14px !important;
+          font-size: 16px !important;
+        }
+
+        .statusbox {
+          min-width: 100%;
+        }
+
+        .board-row {
+          justify-content: space-between;
+          gap: 10px;
+        }
+
+        .left-group, .right-group {
+          gap: 8px;
+        }
+
+        .foundation-empty, .tableau-empty, .recycle {
+          font-size: 28px;
+        }
+
+        .fallback-rank {
+          font-size: 13px;
+        }
+
+        .fallback-center {
+          font-size: 20px;
+        }
+      }
+
+      @media (hover: none) and (pointer: coarse) {
+        .card:hover, .foundation-empty:hover, .tableau-empty:hover {
+          transform: none;
+          box-shadow: 0 10px 18px var(--nuees-shadow);
+        }
+      }
     ")),
     tags$script(HTML(" 
       document.addEventListener('DOMContentLoaded', function () {
         let currentDrag = null;
+        const isCoarsePointer = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+
+        document.documentElement.classList.toggle('touch-device', isCoarsePointer);
 
         document.addEventListener('dragstart', function(e) {
           const el = e.target.closest('.draggable-card');
-          if (!el) return;
+          if (!el || isCoarsePointer) return;
           currentDrag = el.dataset.drag || null;
           e.dataTransfer.setData('text/plain', currentDrag || '');
           e.dataTransfer.effectAllowed = 'move';
@@ -542,14 +759,14 @@ ui <- fluidPage(
 
         document.addEventListener('dragover', function(e) {
           const zone = e.target.closest('.dropzone');
-          if (!zone || !currentDrag) return;
+          if (!zone || !currentDrag || isCoarsePointer) return;
           e.preventDefault();
           e.dataTransfer.dropEffect = 'move';
         });
 
         document.addEventListener('dragenter', function(e) {
           const zone = e.target.closest('.dropzone');
-          if (!zone || !currentDrag) return;
+          if (!zone || !currentDrag || isCoarsePointer) return;
           zone.classList.add('drop-hover');
         });
 
@@ -561,7 +778,7 @@ ui <- fluidPage(
 
         document.addEventListener('drop', function(e) {
           const zone = e.target.closest('.dropzone');
-          if (!zone || !currentDrag) return;
+          if (!zone || !currentDrag || isCoarsePointer) return;
           e.preventDefault();
           zone.classList.remove('drop-hover');
           const payload = JSON.stringify({ source: JSON.parse(currentDrag), target: JSON.parse(zone.dataset.drop) });
@@ -577,7 +794,7 @@ ui <- fluidPage(
       div(class = "subtitle", "Texte à ajouter."),
       div(class = "help",
           HTML('<strong>Contexte :</strong> texte à ajouter.<br><br>
-               <strong>Utilisation :</strong> clique pour jouer comme avant, ou glisse-dépose une carte / pile visible sur une colonne ou une fondation. <br>
+               <strong>Utilisation :</strong> sur ordinateur, clique ou glisse-dépose une carte / pile visible. Sur smartphone, le mode recommandé est le clic pour sélectionner puis le clic sur la destination. <br>
                On peut aussi ajouter des liens comme <a href="https://nuees.net/jeux/" target="_blank">jeu Nuées</a>')
       ),
       div(class = "topbar",
@@ -596,7 +813,7 @@ ui <- fluidPage(
       div(class = "tableau-row",
           uiOutput("tab_1"), uiOutput("tab_2"), uiOutput("tab_3"), uiOutput("tab_4"),
           uiOutput("tab_5"), uiOutput("tab_6"), uiOutput("tab_7")),
-      div(class = "footer-note", "Note de bas de page à ajouter.")
+      div(class = "footer-note", "Images conseillées : ratio proche de 118×165, idéalement en PNG, mais JPG/JPEG sont aussi acceptés dans cette version.")
   )
 )
 
