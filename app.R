@@ -1028,7 +1028,7 @@ ui <- fluidPage(
           --card-width: 86px;
           --card-height: 120px;
           --overlap-down: 108px;
-          --overlap-up: 24px;
+          --overlap-up: 108px;
         }
         .tableau-row { grid-template-columns: repeat(7, minmax(92px, 1fr)); }
       }
