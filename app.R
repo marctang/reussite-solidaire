@@ -949,10 +949,10 @@ ui <- fluidPage(
         min-height: calc(var(--card-height) + 180px);
         position: relative;
       }
-      .tableau-card-wrap.first-card { margin-top: 0; }
+      .tableau-card-wrap.first-card { margin-top: calc(var(--overlap-down) * -1); }
       .tableau-card-wrap.face-down-card { margin-top: calc(var(--overlap-down) * -1); }
       .tableau-card-wrap.face-up-card { margin-top: calc(var(--overlap-up) * -1); }
-      .tableau-card-wrap:first-child { margin-top: 0 !important; }
+      .tableau-card-wrap:first-child { margin-top: 0 !important;  }
       .sol-card {
         width: var(--card-width);
         height: var(--card-height);
