@@ -2,15 +2,22 @@ library(shiny)
 library(htmltools)
 library(jsonlite)
 
-# =========================
-# Helpers: deck + game logic
-# =========================
+# =========================================================
+# Solitaire Klondike (single-file Shiny app)
+# - proche du Solitaire Windows classique
+# - glisser-deposer + clic pour deplacer
+# - images de cartes personnalisables via PNG/JPG
+# - themes detectes automatiquement dans www/cards/
+# =========================================================
 
+# -----------------------------
+# Deck helpers
+# -----------------------------
 suits <- c("S", "H", "D", "C")
 ranks <- c("A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K")
-suit_symbols <- c(S = "♠", H = "♥", D = "♦", C = "♣")
-rank_value <- function(rank) match(rank, ranks)
-suit_color <- function(suit) if (suit %in% c("H", "D")) "red" else "black"
+suit_symbol <- c(S = "♠", H = "♥", D = "♦", C = "♣")
+suit_color <- function(s) if (s %in% c("H", "D")) "red" else "black"
+rank_value <- function(r) match(r, ranks)
 
 make_deck <- function() {
   deck <- expand.grid(rank = ranks, suit = suits, stringsAsFactors = FALSE)
@@ -19,138 +26,647 @@ make_deck <- function() {
   deck
 }
 
-get_card <- function(id, deck) deck[deck$id == id, , drop = FALSE]
-
-top_card <- function(vec) if (length(vec) == 0) NULL else vec[[length(vec)]]
-
-new_game_state <- function(seed = NULL) {
-  if (!is.null(seed)) set.seed(seed)
-
-  deck <- make_deck()
-  ids <- sample(deck$id)
-
-  tableau <- vector("list", 7)
-  pos <- 1
-  for (i in 1:7) {
-    pile_ids <- ids[pos:(pos + i - 1)]
-    pos <- pos + i
-    tableau[[i]] <- list(ids = pile_ids, up = c(rep(FALSE, i - 1), TRUE))
-  }
-
-  stock_ids <- if (pos <= length(ids)) ids[pos:length(ids)] else character(0)
-
-  list(
-    deck = deck,
-    stock = stock_ids,
-    waste = character(0),
-    foundations = list(S = character(0), H = character(0), D = character(0), C = character(0)),
-    tableau = tableau,
-    selected = NULL,
-    message = "Nouvelle partie."
-  )
+get_card <- function(id, deck) {
+  deck[deck$id == id, , drop = FALSE]
 }
 
-flip_if_needed <- function(pile) {
+top_card <- function(x) if (length(x) == 0) NULL else x[[length(x)]]
+
+flip_last_if_needed <- function(pile) {
   if (length(pile$ids) > 0 && !any(pile$up)) {
     pile$up[length(pile$up)] <- TRUE
   }
   pile
 }
 
-is_tableau_build_valid <- function(moving_id, target_id, deck) {
+# -----------------------------
+# Game initialization
+# -----------------------------
+new_game_state <- function(draw_n = 3, seed = NULL) {
+  if (!is.null(seed)) set.seed(seed)
+
+  deck <- make_deck()
+  shuffled <- sample(deck$id)
+
+  tableau <- vector("list", 7)
+  pos <- 1
+  for (i in seq_len(7)) {
+    ids <- shuffled[pos:(pos + i - 1)]
+    tableau[[i]] <- list(ids = ids, up = c(rep(FALSE, i - 1), TRUE))
+    pos <- pos + i
+  }
+
+  stock <- if (pos <= length(shuffled)) shuffled[pos:length(shuffled)] else character(0)
+
+  list(
+    deck = deck,
+    draw_n = draw_n,
+    stock = stock,
+    waste = character(0),
+    foundations = list(S = character(0), H = character(0), D = character(0), C = character(0)),
+    tableau = tableau,
+    selected = NULL,
+    moves = 0,
+    score = 0,
+    started_at = Sys.time(),
+    message = "Texte à ajouter."
+  )
+}
+
+# -----------------------------
+# Rules
+# -----------------------------
+can_place_on_tableau <- function(moving_id, target_id, deck) {
   moving <- get_card(moving_id, deck)
   target <- get_card(target_id, deck)
-  nrow(moving) == 1 && nrow(target) == 1 &&
+
+  nrow(moving) == 1 &&
+    nrow(target) == 1 &&
     moving$color != target$color &&
     rank_value(moving$rank) == rank_value(target$rank) - 1
 }
 
-is_foundation_build_valid <- function(card_id, foundation_vec, deck) {
+can_move_to_empty_tableau <- function(card_id, deck) {
+  card <- get_card(card_id, deck)
+  nrow(card) == 1 && identical(card$rank, "K")
+}
+
+can_place_on_foundation <- function(card_id, foundation_ids, deck, target_suit = NULL) {
   card <- get_card(card_id, deck)
   if (nrow(card) == 0) return(FALSE)
+  if (!is.null(target_suit) && !identical(card$suit, target_suit)) return(FALSE)
 
-  if (length(foundation_vec) == 0) return(card$rank == "A")
+  if (length(foundation_ids) == 0) return(identical(card$rank, "A"))
 
-  topf <- get_card(top_card(foundation_vec), deck)
-  nrow(topf) == 1 &&
-    card$suit == topf$suit &&
-    rank_value(card$rank) == rank_value(topf$rank) + 1
+  topf <- get_card(top_card(foundation_ids), deck)
+  identical(card$suit, topf$suit) && rank_value(card$rank) == rank_value(topf$rank) + 1
 }
 
-move_tableau_sequence <- function(state, from_col, start_idx, to_col) {
-  source <- state$tableau[[from_col]]
-  target <- state$tableau[[to_col]]
-
-  moving_ids <- source$ids[start_idx:length(source$ids)]
-  moving_up  <- source$up[start_idx:length(source$up)]
-
-  source$ids <- if (start_idx > 1) source$ids[1:(start_idx - 1)] else character(0)
-  source$up  <- if (start_idx > 1) source$up[1:(start_idx - 1)] else logical(0)
-
-  target$ids <- c(target$ids, moving_ids)
-  target$up  <- c(target$up, moving_up)
-
-  state$tableau[[from_col]] <- flip_if_needed(source)
-  state$tableau[[to_col]] <- target
-  state
+is_won <- function(state) {
+  sum(vapply(state$foundations, length, integer(1))) == 52
 }
 
-check_win <- function(state) sum(vapply(state$foundations, length, integer(1))) == 52
-
-# =========================
-# Asset handling
-# =========================
-# Shiny serves files from ./www automatically.
-# We also support a legacy ./cards folder during local dev if present.
-
-if (dir.exists("cards") && !dir.exists("www/cards")) {
-  addResourcePath("cards", "cards")
+# -----------------------------
+# Theme / assets
+# -----------------------------
+normalize_theme_name <- function(x) {
+  x <- trimws(x)
+  x[nzchar(x)]
 }
 
-card_extensions <- c("png", "jpg", "jpeg")
+list_theme_dirs <- function(base_dir) {
+  if (!dir.exists(base_dir)) return(character(0))
+  all_dirs <- list.dirs(base_dir, recursive = FALSE, full.names = FALSE)
+  normalize_theme_name(all_dirs)
+}
 
-find_card_asset <- function(card_id) {
-  for (ext in card_extensions) {
-    rel <- paste0("cards/", card_id, ".", ext)
-    if (file.exists(file.path("www", rel)) || file.exists(rel)) return(rel)
+available_themes <- function() {
+  themes <- c("classic")
+  themes <- c(themes, list_theme_dirs("www/cards"), list_theme_dirs("cards"))
+  unique(themes)
+}
+
+ensure_resource_paths <- function() {
+  if (dir.exists("cards")) addResourcePath("cards_local", normalizePath("cards", winslash = "/", mustWork = FALSE))
+  if (dir.exists("www/cards")) addResourcePath("cards_www", normalizePath("www/cards", winslash = "/", mustWork = FALSE))
+}
+
+ensure_resource_paths()
+
+find_asset <- function(card_id, theme = "classic", back = FALSE, session_theme_dir = NULL) {
+  exts <- c("png", "jpg", "jpeg", "webp")
+  fname <- if (back) "back" else card_id
+
+  # 1) uploaded zip theme for current session
+  if (!is.null(session_theme_dir) && dir.exists(session_theme_dir)) {
+    for (ext in exts) {
+      p <- file.path(session_theme_dir, paste0(fname, ".", ext))
+      if (file.exists(p)) {
+        addResourcePath("cards_session", normalizePath(session_theme_dir, winslash = "/", mustWork = FALSE))
+        return(paste0("cards_session/", basename(p)))
+      }
+    }
   }
-  NULL
-}
 
-find_back_asset <- function() {
-  for (ext in card_extensions) {
-    rel <- paste0("cards/back.", ext)
-    if (file.exists(file.path("www", rel)) || file.exists(rel)) return(rel)
+  # 2) theme folder in www/cards/<theme>
+  if (!identical(theme, "classic")) {
+    for (ext in exts) {
+      rel <- file.path(theme, paste0(fname, ".", ext))
+      p1 <- file.path("www/cards", rel)
+      p2 <- file.path("cards", rel)
+      if (file.exists(p1)) return(paste0("cards_www/", rel))
+      if (file.exists(p2)) return(paste0("cards_local/", rel))
+    }
   }
+
+  # 3) direct flat folder fallback: www/cards/AS.png etc.
+  for (ext in exts) {
+    rel <- paste0(fname, ".", ext)
+    p1 <- file.path("www/cards", rel)
+    p2 <- file.path("cards", rel)
+    if (file.exists(p1)) return(paste0("cards_www/", rel))
+    if (file.exists(p2)) return(paste0("cards_local/", rel))
+  }
+
   NULL
 }
 
 card_label <- function(card_id) {
-  rank <- gsub("([0-9JQKA]+)([SHDC])", "\\1", card_id)
-  suit <- gsub("([0-9JQKA]+)([SHDC])", "\\2", card_id)
-  paste(rank, suit_symbols[[suit]])
+  rank <- sub("([0-9JQKA]+)([SHDC])$", "\\1", card_id)
+  suit <- sub("([0-9JQKA]+)([SHDC])$", "\\2", card_id)
+  paste(rank, suit_symbol[[suit]])
 }
 
+# -----------------------------
+# Movement helpers
+# -----------------------------
+move_tableau_sequence <- function(state, from_col, from_idx, to_col) {
+  src <- state$tableau[[from_col]]
+  dst <- state$tableau[[to_col]]
+
+  moving_ids <- src$ids[from_idx:length(src$ids)]
+  moving_up  <- src$up[from_idx:length(src$up)]
+
+  if (from_idx > 1) {
+    src$ids <- src$ids[1:(from_idx - 1)]
+    src$up  <- src$up[1:(from_idx - 1)]
+  } else {
+    src$ids <- character(0)
+    src$up  <- logical(0)
+  }
+
+  dst$ids <- c(dst$ids, moving_ids)
+  dst$up  <- c(dst$up, moving_up)
+
+  state$tableau[[from_col]] <- flip_last_if_needed(src)
+  state$tableau[[to_col]] <- dst
+  state$moves <- state$moves + 1
+  state
+}
+
+remove_top_tableau_card <- function(state, col) {
+  pile <- state$tableau[[col]]
+  id <- top_card(pile$ids)
+  if (is.null(id)) return(list(state = state, card = NULL))
+
+  pile$ids <- head(pile$ids, -1)
+  pile$up <- head(pile$up, -1)
+  state$tableau[[col]] <- flip_last_if_needed(pile)
+  list(state = state, card = id)
+}
+
+send_to_foundation <- function(state, from_type, from_col = NULL, from_suit = NULL) {
+  if (identical(from_type, "waste")) {
+    card_id <- top_card(state$waste)
+    if (is.null(card_id)) {
+      state$message <- "Aucune carte dans la défausse."
+      return(state)
+    }
+    suit <- get_card(card_id, state$deck)$suit
+    if (!can_place_on_foundation(card_id, state$foundations[[suit]], state$deck, target_suit = suit)) {
+      state$message <- "Cette carte ne peut pas aller en fondation."
+      return(state)
+    }
+    state$waste <- head(state$waste, -1)
+    state$foundations[[suit]] <- c(state$foundations[[suit]], card_id)
+    state$moves <- state$moves + 1
+    state$score <- state$score + 10
+    state$message <- paste("Carte envoyée en fondation :", card_label(card_id))
+    return(state)
+  }
+
+  if (identical(from_type, "tableau")) {
+    pile <- state$tableau[[from_col]]
+    if (length(pile$ids) == 0 || !pile$up[length(pile$up)]) {
+      state$message <- "Aucune carte visible à envoyer."
+      return(state)
+    }
+    card_id <- top_card(pile$ids)
+    suit <- get_card(card_id, state$deck)$suit
+    if (!can_place_on_foundation(card_id, state$foundations[[suit]], state$deck, target_suit = suit)) {
+      state$message <- "Cette carte ne peut pas aller en fondation."
+      return(state)
+    }
+    rem <- remove_top_tableau_card(state, from_col)
+    state <- rem$state
+    state$foundations[[suit]] <- c(state$foundations[[suit]], card_id)
+    state$moves <- state$moves + 1
+    state$score <- state$score + 10
+    state$message <- paste("Carte envoyée en fondation :", card_label(card_id))
+    return(state)
+  }
+
+  if (identical(from_type, "foundation")) {
+    state$message <- "La carte est déjà en fondation."
+    return(state)
+  }
+
+  state
+}
+
+draw_from_stock <- function(state) {
+  if (length(state$stock) == 0) {
+    if (length(state$waste) == 0) {
+      state$message <- "Le talon et la défausse sont vides."
+      return(state)
+    }
+    state$stock <- rev(state$waste)
+    state$waste <- character(0)
+    state$message <- "Le talon a été reconstitué."
+    return(state)
+  }
+
+  n <- min(state$draw_n, length(state$stock))
+  drawn <- state$stock[seq_len(n)]
+  state$stock <- state$stock[-seq_len(n)]
+  state$waste <- c(state$waste, drawn)
+  state$moves <- state$moves + 1
+  state$message <- if (n == 1) "1 carte tirée." else paste(n, "cartes tirées.")
+  state
+}
+
+try_move_to_tableau <- function(state, moving_id, target_col, source_type, source_col = NULL, source_idx = NULL, source_suit = NULL) {
+  dst <- state$tableau[[target_col]]
+
+  if (length(dst$ids) == 0) {
+    if (!can_move_to_empty_tableau(moving_id, state$deck)) {
+      state$message <- "Seul un Roi peut aller sur une colonne vide."
+      return(state)
+    }
+
+    if (identical(source_type, "waste")) {
+      state$waste <- head(state$waste, -1)
+      state$tableau[[target_col]]$ids <- c(state$tableau[[target_col]]$ids, moving_id)
+      state$tableau[[target_col]]$up <- c(state$tableau[[target_col]]$up, TRUE)
+    } else if (identical(source_type, "foundation")) {
+      state$foundations[[source_suit]] <- head(state$foundations[[source_suit]], -1)
+      state$tableau[[target_col]]$ids <- c(state$tableau[[target_col]]$ids, moving_id)
+      state$tableau[[target_col]]$up <- c(state$tableau[[target_col]]$up, TRUE)
+    } else if (identical(source_type, "tableau")) {
+      state <- move_tableau_sequence(state, source_col, source_idx, target_col)
+      state$message <- paste("Pile déplacée vers la colonne", target_col)
+      state$score <- state$score + 5
+      return(state)
+    }
+
+    state$moves <- state$moves + 1
+    state$score <- state$score + 5
+    state$message <- paste("Carte déplacée vers la colonne", target_col)
+    return(state)
+  }
+
+  target_id <- top_card(dst$ids)
+  if (!can_place_on_tableau(moving_id, target_id, state$deck)) {
+    state$message <- "Déplacement invalide."
+    return(state)
+  }
+
+  if (identical(source_type, "waste")) {
+    state$waste <- head(state$waste, -1)
+    state$tableau[[target_col]]$ids <- c(state$tableau[[target_col]]$ids, moving_id)
+    state$tableau[[target_col]]$up <- c(state$tableau[[target_col]]$up, TRUE)
+  } else if (identical(source_type, "foundation")) {
+    state$foundations[[source_suit]] <- head(state$foundations[[source_suit]], -1)
+    state$tableau[[target_col]]$ids <- c(state$tableau[[target_col]]$ids, moving_id)
+    state$tableau[[target_col]]$up <- c(state$tableau[[target_col]]$up, TRUE)
+  } else if (identical(source_type, "tableau")) {
+    if (identical(source_col, target_col)) return(state)
+    state <- move_tableau_sequence(state, source_col, source_idx, target_col)
+    state$message <- paste("Pile déplacée vers la colonne", target_col)
+    state$score <- state$score + 5
+    return(state)
+  }
+
+  state$moves <- state$moves + 1
+  state$score <- state$score + 5
+  state$message <- paste("Carte déplacée vers la colonne", target_col)
+  state
+}
+
+try_move_to_foundation <- function(state, moving_id, foundation_suit, source_type, source_col = NULL, source_idx = NULL, source_suit = NULL) {
+  if (!can_place_on_foundation(moving_id, state$foundations[[foundation_suit]], state$deck, target_suit = foundation_suit)) {
+    state$message <- "Déplacement invalide vers la fondation."
+    return(state)
+  }
+
+  if (identical(source_type, "waste")) {
+    state$waste <- head(state$waste, -1)
+  } else if (identical(source_type, "foundation")) {
+    if (identical(source_suit, foundation_suit)) return(state)
+    state$foundations[[source_suit]] <- head(state$foundations[[source_suit]], -1)
+  } else if (identical(source_type, "tableau")) {
+    pile <- state$tableau[[source_col]]
+    if (!identical(source_idx, length(pile$ids))) {
+      state$message <- "Seule la carte du dessus peut aller en fondation."
+      return(state)
+    }
+    rem <- remove_top_tableau_card(state, source_col)
+    state <- rem$state
+  }
+
+  state$foundations[[foundation_suit]] <- c(state$foundations[[foundation_suit]], moving_id)
+  state$moves <- state$moves + 1
+  state$score <- state$score + 10
+  state$message <- paste("Carte envoyée en fondation :", card_label(moving_id))
+  state
+}
+
+parse_click <- function(x) {
+  parts <- strsplit(x, ":", fixed = TRUE)[[1]]
+  list(raw = x, parts = parts)
+}
+
+find_auto_tableau_target <- function(state, moving_id, exclude_col = NULL) {
+  for (col in seq_len(7)) {
+    if (!is.null(exclude_col) && identical(col, exclude_col)) next
+    pile <- state$tableau[[col]]
+    if (length(pile$ids) == 0) {
+      if (can_move_to_empty_tableau(moving_id, state$deck)) return(col)
+    } else {
+      if (can_place_on_tableau(moving_id, top_card(pile$ids), state$deck)) return(col)
+    }
+  }
+  NULL
+}
+
+auto_move_selected <- function(state) {
+  sel <- state$selected
+  if (is.null(sel)) return(state)
+
+  if (identical(sel$type, "waste")) {
+    card_id <- top_card(state$waste)
+    if (is.null(card_id)) return(state)
+    suit <- get_card(card_id, state$deck)$suit
+    if (can_place_on_foundation(card_id, state$foundations[[suit]], state$deck, suit)) {
+      state <- send_to_foundation(state, "waste")
+      state$selected <- NULL
+      return(state)
+    }
+    tgt <- find_auto_tableau_target(state, card_id)
+    if (!is.null(tgt)) {
+      state <- try_move_to_tableau(state, card_id, tgt, "waste")
+      state$selected <- NULL
+      return(state)
+    }
+    state$message <- "Aucun déplacement automatique possible."
+    return(state)
+  }
+
+  if (identical(sel$type, "tableau")) {
+    pile <- state$tableau[[sel$col]]
+    if (sel$idx > length(pile$ids) || !pile$up[sel$idx]) {
+      state$selected <- NULL
+      return(state)
+    }
+    card_id <- pile$ids[sel$idx]
+
+    # single top card -> try foundation first
+    if (identical(sel$idx, length(pile$ids))) {
+      suit <- get_card(card_id, state$deck)$suit
+      if (can_place_on_foundation(card_id, state$foundations[[suit]], state$deck, suit)) {
+        state <- send_to_foundation(state, "tableau", from_col = sel$col)
+        state$selected <- NULL
+        return(state)
+      }
+    }
+
+    tgt <- find_auto_tableau_target(state, card_id, exclude_col = sel$col)
+    if (!is.null(tgt)) {
+      state <- try_move_to_tableau(state, card_id, tgt, "tableau", source_col = sel$col, source_idx = sel$idx)
+      state$selected <- NULL
+      return(state)
+    }
+
+    state$message <- "Aucun déplacement automatique possible."
+    return(state)
+  }
+
+  if (identical(sel$type, "foundation")) {
+    card_id <- top_card(state$foundations[[sel$suit]])
+    if (is.null(card_id)) return(state)
+    tgt <- find_auto_tableau_target(state, card_id)
+    if (!is.null(tgt)) {
+      state <- try_move_to_tableau(state, card_id, tgt, "foundation", source_suit = sel$suit)
+      state$selected <- NULL
+      return(state)
+    }
+    state$message <- "Aucun déplacement automatique possible."
+  }
+
+  state
+}
+
+handle_click <- function(state, click) {
+  info <- parse_click(click)
+  parts <- info$parts
+
+  if (identical(parts[[1]], "stock")) {
+    state$selected <- NULL
+    return(draw_from_stock(state))
+  }
+
+  # empty tableau as explicit target for selected card
+  if (identical(parts[[1]], "tableau") && length(parts) == 3 && identical(parts[[3]], "empty")) {
+    target_col <- as.integer(parts[[2]])
+    sel <- state$selected
+    if (is.null(sel)) {
+      state$message <- "Sélectionnez d'abord une carte."
+      return(state)
+    }
+    if (identical(sel$type, "waste")) {
+      card_id <- top_card(state$waste)
+      state <- try_move_to_tableau(state, card_id, target_col, "waste")
+      state$selected <- NULL
+      return(state)
+    }
+    if (identical(sel$type, "foundation")) {
+      card_id <- top_card(state$foundations[[sel$suit]])
+      state <- try_move_to_tableau(state, card_id, target_col, "foundation", source_suit = sel$suit)
+      state$selected <- NULL
+      return(state)
+    }
+    if (identical(sel$type, "tableau")) {
+      pile <- state$tableau[[sel$col]]
+      card_id <- pile$ids[sel$idx]
+      state <- try_move_to_tableau(state, card_id, target_col, "tableau", source_col = sel$col, source_idx = sel$idx)
+      state$selected <- NULL
+      return(state)
+    }
+  }
+
+  if (identical(parts[[1]], "waste")) {
+    if (length(state$waste) == 0) return(state)
+    if (!is.null(state$selected) && identical(state$selected$type, "waste")) {
+      state$selected <- NULL
+      state$message <- "Sélection annulée."
+      return(state)
+    }
+    state$selected <- list(type = "waste")
+    state$message <- "Carte de la défausse sélectionnée."
+    return(state)
+  }
+
+  if (identical(parts[[1]], "foundation")) {
+    suit <- parts[[2]]
+
+    if (is.null(state$selected)) {
+      if (length(state$foundations[[suit]]) == 0) {
+        state$message <- "Fondation vide."
+        return(state)
+      }
+      state$selected <- list(type = "foundation", suit = suit)
+      state$message <- paste("Fondation", suit_symbol[[suit]], "sélectionnée.")
+      return(state)
+    }
+
+    sel <- state$selected
+    if (identical(sel$type, "waste")) {
+      card_id <- top_card(state$waste)
+      state <- try_move_to_foundation(state, card_id, suit, "waste")
+      state$selected <- NULL
+      return(state)
+    }
+    if (identical(sel$type, "tableau")) {
+      pile <- state$tableau[[sel$col]]
+      card_id <- pile$ids[sel$idx]
+      state <- try_move_to_foundation(state, card_id, suit, "tableau", source_col = sel$col, source_idx = sel$idx)
+      state$selected <- NULL
+      return(state)
+    }
+    if (identical(sel$type, "foundation")) {
+      if (identical(sel$suit, suit)) {
+        state$selected <- NULL
+        state$message <- "Sélection annulée."
+        return(state)
+      }
+      card_id <- top_card(state$foundations[[sel$suit]])
+      state <- try_move_to_foundation(state, card_id, suit, "foundation", source_suit = sel$suit)
+      state$selected <- NULL
+      return(state)
+    }
+  }
+
+  if (identical(parts[[1]], "tableau")) {
+    col <- as.integer(parts[[2]])
+    idx <- as.integer(parts[[3]])
+    pile <- state$tableau[[col]]
+    if (idx > length(pile$ids)) return(state)
+
+    if (!pile$up[idx]) {
+      state$message <- "Cette carte est retournée."
+      return(state)
+    }
+
+    if (is.null(state$selected)) {
+      state$selected <- list(type = "tableau", col = col, idx = idx)
+      state$message <- paste("Sélection dans la colonne", col)
+      return(state)
+    }
+
+    sel <- state$selected
+    if (identical(sel$type, "tableau") && identical(sel$col, col) && identical(sel$idx, idx)) {
+      state <- auto_move_selected(state)
+      if (!identical(state$message, "Aucun déplacement automatique possible.")) state$selected <- NULL
+      return(state)
+    }
+
+    # target tableau
+    if (identical(sel$type, "waste")) {
+      card_id <- top_card(state$waste)
+      state <- try_move_to_tableau(state, card_id, col, "waste")
+      state$selected <- NULL
+      return(state)
+    }
+    if (identical(sel$type, "foundation")) {
+      card_id <- top_card(state$foundations[[sel$suit]])
+      state <- try_move_to_tableau(state, card_id, col, "foundation", source_suit = sel$suit)
+      state$selected <- NULL
+      return(state)
+    }
+    if (identical(sel$type, "tableau")) {
+      moving_id <- state$tableau[[sel$col]]$ids[sel$idx]
+      state <- try_move_to_tableau(state, moving_id, col, "tableau", source_col = sel$col, source_idx = sel$idx)
+      state$selected <- NULL
+      return(state)
+    }
+  }
+
+  state
+}
+
+apply_drag_move <- function(state, source, target) {
+  if (is.null(source) || is.null(target)) return(state)
+
+  if (identical(target$target_type, "tableau")) {
+    target_col <- as.integer(target$col)
+
+    if (identical(source$type, "waste")) {
+      moving_id <- top_card(state$waste)
+      return(try_move_to_tableau(state, moving_id, target_col, "waste"))
+    }
+    if (identical(source$type, "foundation")) {
+      moving_id <- top_card(state$foundations[[source$suit]])
+      return(try_move_to_tableau(state, moving_id, target_col, "foundation", source_suit = source$suit))
+    }
+    if (identical(source$type, "tableau")) {
+      moving_id <- state$tableau[[source$col]]$ids[source$idx]
+      return(try_move_to_tableau(state, moving_id, target_col, "tableau", source_col = source$col, source_idx = source$idx))
+    }
+  }
+
+  if (identical(target$target_type, "foundation")) {
+    suit <- target$suit
+    if (identical(source$type, "waste")) {
+      moving_id <- top_card(state$waste)
+      return(try_move_to_foundation(state, moving_id, suit, "waste"))
+    }
+    if (identical(source$type, "foundation")) {
+      moving_id <- top_card(state$foundations[[source$suit]])
+      return(try_move_to_foundation(state, moving_id, suit, "foundation", source_suit = source$suit))
+    }
+    if (identical(source$type, "tableau")) {
+      moving_id <- state$tableau[[source$col]]$ids[source$idx]
+      return(try_move_to_foundation(state, moving_id, suit, "tableau", source_col = source$col, source_idx = source$idx))
+    }
+  }
+
+  state$message <- "Déplacement impossible."
+  state
+}
+
+# -----------------------------
+# UI fragments
+# -----------------------------
 source_payload <- function(type, col = NULL, idx = NULL, suit = NULL) {
   payload <- list(type = type)
   if (!is.null(col)) payload$col <- col
   if (!is.null(idx)) payload$idx <- idx
   if (!is.null(suit)) payload$suit <- suit
-  toJSON(payload, auto_unbox = TRUE)
+  jsonlite::toJSON(payload, auto_unbox = TRUE)
 }
 
 drop_payload <- function(target_type, col = NULL, suit = NULL) {
   payload <- list(target_type = target_type)
   if (!is.null(col)) payload$col <- col
   if (!is.null(suit)) payload$suit <- suit
-  toJSON(payload, auto_unbox = TRUE)
+  jsonlite::toJSON(payload, auto_unbox = TRUE)
 }
 
-card_div <- function(card_id = NULL, face_up = TRUE, clickable = FALSE, click_value = NULL,
-                     selected = FALSE, deck = NULL, placeholder = FALSE,
-                     draggable = FALSE, drag_payload = NULL, drop_payload_json = NULL,
+card_tag <- function(card_id = NULL,
+                     face_up = TRUE,
+                     clickable = FALSE,
+                     click_value = NULL,
+                     selected = FALSE,
+                     deck = NULL,
+                     theme = "classic",
+                     session_theme_dir = NULL,
+                     placeholder = FALSE,
+                     draggable = FALSE,
+                     drag_payload = NULL,
+                     drop_payload_json = NULL,
                      extra_classes = character()) {
-  classes <- c("card", extra_classes)
+
+  classes <- c("sol-card", extra_classes)
   if (!face_up) classes <- c(classes, "card-back")
   if (selected) classes <- c(classes, "selected")
   if (placeholder) classes <- c(classes, "placeholder")
@@ -159,35 +675,33 @@ card_div <- function(card_id = NULL, face_up = TRUE, clickable = FALSE, click_va
 
   attrs <- list(class = paste(classes, collapse = " "))
   if (clickable && !is.null(click_value)) {
-    attrs$onclick <- sprintf("Shiny.setInputValue('card_click','%s',{priority:'event'})", click_value)
+    attrs$onclick <- sprintf("Shiny.setInputValue('card_click', '%s', {priority: 'event'})", click_value)
   }
   if (draggable && face_up && !placeholder && !is.null(drag_payload)) {
     attrs$draggable <- "true"
-    attrs[['data-drag']] <- drag_payload
+    attrs[["data-drag"]] <- drag_payload
   }
-  if (!is.null(drop_payload_json)) {
-    attrs[['data-drop']] <- drop_payload_json
-  }
+  if (!is.null(drop_payload_json)) attrs[["data-drop"]] <- drop_payload_json
 
   if (placeholder) {
     return(do.call(div, c(attrs, list())))
   }
 
   if (!face_up) {
-    back_asset <- find_back_asset()
+    back_asset <- find_asset(back = TRUE, card_id = NULL, theme = theme, session_theme_dir = session_theme_dir)
     if (!is.null(back_asset)) {
-      return(do.call(div, c(attrs, list(img(src = back_asset, class = "card-img")))))
+      return(do.call(div, c(attrs, list(img(src = back_asset, class = "card-img", draggable = "false")))))
     }
     return(do.call(div, c(attrs, list(div(class = "fallback-back", "✶")))))
   }
 
-  card_asset <- find_card_asset(card_id)
-  if (!is.null(card_asset)) {
-    return(do.call(div, c(attrs, list(img(src = card_asset, class = "card-img")))))
+  front_asset <- find_asset(card_id = card_id, back = FALSE, theme = theme, session_theme_dir = session_theme_dir)
+  if (!is.null(front_asset)) {
+    return(do.call(div, c(attrs, list(img(src = front_asset, class = "card-img", draggable = "false")))))
   }
 
   card <- get_card(card_id, deck)
-  col <- if (nrow(card) == 1 && card$color == "red") "#8d2e2b" else "#1f2328"
+  col <- if (nrow(card) == 1 && identical(card$color, "red")) "#a52b2b" else "#111827"
   do.call(div, c(attrs, list(
     style = sprintf("color:%s;", col),
     div(class = "fallback-rank tl", card_label(card_id)),
@@ -196,88 +710,92 @@ card_div <- function(card_id = NULL, face_up = TRUE, clickable = FALSE, click_va
   )))
 }
 
-render_stock <- function(state) {
+render_stock <- function(state, theme, session_theme_dir) {
   clickable <- !(length(state$stock) == 0 && length(state$waste) == 0)
   if (length(state$stock) > 0) {
-    return(card_div(face_up = FALSE, clickable = clickable, click_value = "stock"))
+    return(card_tag(face_up = FALSE, clickable = clickable, click_value = "stock", theme = theme, session_theme_dir = session_theme_dir))
   }
-  div(class = "pile-wrap",
-      div(class = "card recycle",
-          onclick = if (clickable) "Shiny.setInputValue('card_click','stock',{priority:'event'})" else NULL,
-          "↺"))
+  div(
+    class = "recycle-wrap",
+    div(
+      class = "sol-card recycle",
+      onclick = if (clickable) "Shiny.setInputValue('card_click','stock',{priority:'event'})" else NULL,
+      "↺"
+    )
+  )
 }
 
-render_waste <- function(state) {
-  if (length(state$waste) == 0) return(card_div(placeholder = TRUE))
+render_waste <- function(state, theme, session_theme_dir) {
+  if (length(state$waste) == 0) return(card_tag(placeholder = TRUE))
+  selected <- !is.null(state$selected) && identical(state$selected$type, "waste")
   card_id <- top_card(state$waste)
-  sel <- identical(state$selected, list(type = "waste"))
-  card_div(
+  card_tag(
     card_id = card_id,
     face_up = TRUE,
     clickable = TRUE,
     click_value = "waste",
-    selected = sel,
+    selected = selected,
     deck = state$deck,
+    theme = theme,
+    session_theme_dir = session_theme_dir,
     draggable = TRUE,
-    drag_payload = source_payload("waste"),
-    drop_payload_json = NULL
+    drag_payload = source_payload("waste")
   )
 }
 
-render_foundation <- function(state, suit) {
+render_foundation <- function(state, suit, theme, session_theme_dir) {
   pile <- state$foundations[[suit]]
-  topid <- top_card(pile)
-  sel <- identical(state$selected, list(type = "foundation", suit = suit))
+  sel <- !is.null(state$selected) && identical(state$selected$type, "foundation") && identical(state$selected$suit, suit)
   dp <- drop_payload("foundation", suit = suit)
 
-  if (is.null(topid)) {
+  if (length(pile) == 0) {
     return(div(
-      class = paste("card foundation-empty dropzone", if (sel) "selected" else ""),
+      class = paste("sol-card foundation-empty dropzone", if (sel) "selected" else ""),
       `data-drop` = dp,
-      onclick = sprintf("Shiny.setInputValue('card_click','foundation:%s',{priority:'event'})", suit),
-      suit_symbols[[suit]]
+      onclick = sprintf("Shiny.setInputValue('card_click', 'foundation:%s', {priority:'event'})", suit),
+      suit_symbol[[suit]]
     ))
   }
 
-  card_div(
-    card_id = topid,
+  card_id <- top_card(pile)
+  card_tag(
+    card_id = card_id,
     face_up = TRUE,
     clickable = TRUE,
     click_value = paste0("foundation:", suit),
     selected = sel,
     deck = state$deck,
+    theme = theme,
+    session_theme_dir = session_theme_dir,
     draggable = TRUE,
     drag_payload = source_payload("foundation", suit = suit),
     drop_payload_json = dp
   )
 }
 
-render_tableau_col <- function(state, col_index) {
-  pile <- state$tableau[[col_index]]
-  dp_col <- drop_payload("tableau", col = col_index)
+render_tableau <- function(state, col, theme, session_theme_dir) {
+  pile <- state$tableau[[col]]
+  dp_col <- drop_payload("tableau", col = col)
 
   if (length(pile$ids) == 0) {
     return(div(
       class = "tableau-col",
-      div(class = "card tableau-empty dropzone",
-          `data-drop` = dp_col,
-          onclick = sprintf("Shiny.setInputValue('card_click','tableau:%s:empty',{priority:'event'})", col_index),
-          "K")
+      div(
+        class = "sol-card tableau-empty dropzone",
+        `data-drop` = dp_col,
+        onclick = sprintf("Shiny.setInputValue('card_click', 'tableau:%s:empty', {priority:'event'})", col),
+        "K"
+      )
     ))
   }
 
-  cards_ui <- lapply(seq_along(pile$ids), function(i) {
-    id <- pile$ids[i]
-    is_up <- pile$up[i]
-
-    sel <- FALSE
-    if (!is.null(state$selected) && identical(state$selected$type, "tableau")) {
-      if (state$selected$col == col_index && i >= state$selected$idx) sel <- TRUE
-    }
-
+  pieces <- lapply(seq_along(pile$ids), function(i) {
+    id <- pile$ids[[i]]
+    up <- pile$up[[i]]
+    sel <- !is.null(state$selected) && identical(state$selected$type, "tableau") && identical(state$selected$col, col) && i >= state$selected$idx
     overlap_class <- if (i == 1) {
       "first-card"
-    } else if (is_up) {
+    } else if (up) {
       "face-up-card"
     } else {
       "face-down-card"
@@ -285,687 +803,436 @@ render_tableau_col <- function(state, col_index) {
 
     div(
       class = paste("tableau-card-wrap", overlap_class),
-      card_div(
+      card_tag(
         card_id = id,
-        face_up = is_up,
+        face_up = up,
         clickable = TRUE,
-        click_value = paste0("tableau:", col_index, ":", i),
+        click_value = paste0("tableau:", col, ":", i),
         selected = sel,
         deck = state$deck,
-        draggable = is_up,
-        drag_payload = if (is_up) source_payload("tableau", col = col_index, idx = i) else NULL,
-        drop_payload_json = if (i == length(pile$ids) && is_up) dp_col else NULL,
-        extra_classes = if (i == length(pile$ids) && is_up) "top-drop-target" else character()
+        theme = theme,
+        session_theme_dir = session_theme_dir,
+        draggable = up,
+        drag_payload = if (up) source_payload("tableau", col = col, idx = i) else NULL,
+        drop_payload_json = if (i == length(pile$ids) && up) dp_col else NULL,
+        extra_classes = if (i == length(pile$ids) && up) "top-drop-target" else character(0)
       )
     )
   })
 
-  div(class = "tableau-col", cards_ui)
+  div(class = "tableau-col", pieces)
 }
 
-apply_drag_move <- function(st, source, target) {
-  # Tableau target
-  if (identical(target$target_type, "tableau")) {
-    col <- as.integer(target$col)
-    pile <- st$tableau[[col]]
-
-    # empty tableau
-    if (length(pile$ids) == 0) {
-      if (identical(source$type, "waste")) {
-        moving_id <- top_card(st$waste)
-        if (is.null(moving_id) || get_card(moving_id, st$deck)$rank != "K") {
-          st$message <- "Seul un Roi peut aller sur une colonne vide."
-          return(st)
-        }
-        st$waste <- head(st$waste, -1)
-        st$tableau[[col]]$ids <- c(st$tableau[[col]]$ids, moving_id)
-        st$tableau[[col]]$up <- c(st$tableau[[col]]$up, TRUE)
-        st$message <- paste("Roi déplacé vers la colonne", col)
-        return(st)
-      }
-      if (identical(source$type, "tableau")) {
-        moving_id <- st$tableau[[source$col]]$ids[source$idx]
-        if (get_card(moving_id, st$deck)$rank != "K") {
-          st$message <- "Seul un Roi peut aller sur une colonne vide."
-          return(st)
-        }
-        st <- move_tableau_sequence(st, source$col, source$idx, col)
-        st$message <- paste("Pile déplacée vers la colonne vide", col)
-        return(st)
-      }
-      if (identical(source$type, "foundation")) {
-        moving_id <- top_card(st$foundations[[source$suit]])
-        if (is.null(moving_id) || get_card(moving_id, st$deck)$rank != "K") {
-          st$message <- "Seul un Roi peut aller sur une colonne vide."
-          return(st)
-        }
-        st$foundations[[source$suit]] <- head(st$foundations[[source$suit]], -1)
-        st$tableau[[col]]$ids <- c(st$tableau[[col]]$ids, moving_id)
-        st$tableau[[col]]$up <- c(st$tableau[[col]]$up, TRUE)
-        st$message <- paste("Carte déplacée vers la colonne", col)
-        return(st)
-      }
-      return(st)
-    }
-
-    target_id <- top_card(pile$ids)
-
-    if (identical(source$type, "waste")) {
-      moving_id <- top_card(st$waste)
-      if (!is.null(moving_id) && is_tableau_build_valid(moving_id, target_id, st$deck)) {
-        st$waste <- head(st$waste, -1)
-        st$tableau[[col]]$ids <- c(st$tableau[[col]]$ids, moving_id)
-        st$tableau[[col]]$up <- c(st$tableau[[col]]$up, TRUE)
-        st$message <- paste("Carte déplacée vers colonne", col)
-      } else st$message <- "Déplacement invalide."
-      return(st)
-    }
-
-    if (identical(source$type, "tableau")) {
-      if (source$col == col) return(st)
-      moving_id <- st$tableau[[source$col]]$ids[source$idx]
-      if (is_tableau_build_valid(moving_id, target_id, st$deck)) {
-        st <- move_tableau_sequence(st, source$col, source$idx, col)
-        st$message <- paste("Pile déplacée de", source$col, "vers", col)
-      } else st$message <- "Déplacement invalide."
-      return(st)
-    }
-
-    if (identical(source$type, "foundation")) {
-      moving_id <- top_card(st$foundations[[source$suit]])
-      if (!is.null(moving_id) && is_tableau_build_valid(moving_id, target_id, st$deck)) {
-        st$foundations[[source$suit]] <- head(st$foundations[[source$suit]], -1)
-        st$tableau[[col]]$ids <- c(st$tableau[[col]]$ids, moving_id)
-        st$tableau[[col]]$up <- c(st$tableau[[col]]$up, TRUE)
-        st$message <- paste("Carte de fondation déplacée vers colonne", col)
-      } else st$message <- "Déplacement invalide."
-      return(st)
-    }
-  }
-
-  # Foundation target
-  if (identical(target$target_type, "foundation")) {
-    suit <- target$suit
-
-    if (identical(source$type, "waste")) {
-      card_id <- top_card(st$waste)
-      if (!is.null(card_id) && is_foundation_build_valid(card_id, st$foundations[[suit]], st$deck)) {
-        st$waste <- head(st$waste, -1)
-        st$foundations[[suit]] <- c(st$foundations[[suit]], card_id)
-        st$message <- paste("Carte envoyée en fondation :", card_id)
-      } else st$message <- "Déplacement invalide vers la fondation."
-      return(st)
-    }
-
-    if (identical(source$type, "tableau")) {
-      pile <- st$tableau[[source$col]]
-      if (source$idx != length(pile$ids) || !pile$up[source$idx]) {
-        st$message <- "Seule la carte visible du dessus peut aller en fondation."
-        return(st)
-      }
-      card_id <- pile$ids[source$idx]
-      if (is_foundation_build_valid(card_id, st$foundations[[suit]], st$deck)) {
-        pile$ids <- head(pile$ids, -1)
-        pile$up <- head(pile$up, -1)
-        st$tableau[[source$col]] <- flip_if_needed(pile)
-        st$foundations[[suit]] <- c(st$foundations[[suit]], card_id)
-        st$message <- paste("Carte envoyée en fondation :", card_id)
-      } else st$message <- "Déplacement invalide vers la fondation."
-      return(st)
-    }
-  }
-
-  st$message <- "Déplacement impossible."
-  st
-}
-
-# =========================
+# -----------------------------
 # UI
-# =========================
-
+# -----------------------------
 ui <- fluidPage(
   tags$head(
     tags$meta(name = "viewport", content = "width=device-width, initial-scale=1, viewport-fit=cover"),
     tags$style(HTML(" 
       :root {
-        --nuees-cream: #f5efe4;
-        --nuees-paper: #fbf7f0;
-        --nuees-ink: #24343b;
-        --nuees-moss: #6d8163;
-        --nuees-sage: #a5b49a;
-        --nuees-rust: #b56b5c;
-        --nuees-gold: #d0b173;
-        --nuees-shadow: rgba(34, 45, 41, 0.18);
+        --bg1: #0d6b38;
+        --bg2: #0a4e2b;
+        --panel: rgba(255,255,255,0.10);
+        --panel-border: rgba(255,255,255,0.18);
+        --ink: #f5f7fb;
+        --muted: rgba(255,255,255,0.78);
         --card-width: 100px;
         --card-height: 140px;
-        --tableau-face-down-overlap: 4px;
-        --tableau-face-up-overlap: 22px;
-        --tableau-gap: 12px;
+        --overlap-down: 126px;
+        --overlap-up: 126px;
+        --shadow: rgba(0,0,0,0.28);
       }
       * { box-sizing: border-box; }
       html, body { min-height: 100%; }
       body {
         background:
-          radial-gradient(circle at top left, rgba(255,255,255,0.30), transparent 30%),
-          linear-gradient(180deg, #d7dfcf 0%, #c7d1bc 30%, #9dae8d 100%);
-        color: var(--nuees-ink);
-        font-family: Georgia, 'Times New Roman', serif;
-        touch-action: manipulation;
+          radial-gradient(circle at top left, rgba(255,255,255,0.08), transparent 25%),
+          radial-gradient(circle at bottom right, rgba(255,255,255,0.06), transparent 28%),
+          linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
+        color: var(--ink);
+        font-family: 'Segoe UI', Arial, sans-serif;
       }
       .container-fluid {
-        max-width: 1320px;
-        padding-top: 12px;
-        padding-bottom: 24px;
-        padding-left: 10px;
-        padding-right: 10px;
+        max-width: 1440px;
+        padding: 14px 12px 28px;
       }
-      .app-shell {
-        background: rgba(251,247,240,0.50);
-        border: 1px solid rgba(255,255,255,0.6);
-        box-shadow: 0 18px 40px var(--nuees-shadow);
-        border-radius: 28px;
-        padding: 14px 14px 20px;
-        backdrop-filter: blur(4px);
+      .shell {
+        border-radius: 24px;
+        background: rgba(0,0,0,0.12);
+        border: 1px solid rgba(255,255,255,0.10);
+        box-shadow: 0 20px 45px rgba(0,0,0,0.18);
+        padding: 14px;
       }
-      h2, h4 { color: var(--nuees-ink); }
-      h2 {
-        font-size: clamp(1.5rem, 2.4vw, 2.15rem);
-        margin-top: 0;
-      }
-      .subtitle {
-        color: #56655d;
-        font-style: italic;
-        margin-top: -6px;
+      .topbar {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        align-items: stretch;
+        justify-content: space-between;
         margin-bottom: 14px;
       }
-      .help, .statusbox {
-        background: rgba(255,255,255,0.72);
-        border: 1px solid rgba(122, 139, 112, 0.25);
-        color: var(--nuees-ink);
+      .titlebox, .controlbox, .statusbox {
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
         border-radius: 18px;
-        box-shadow: 0 8px 24px rgba(80,90,70,0.10);
+        padding: 12px 14px;
+        backdrop-filter: blur(5px);
       }
-      .help { padding: 14px 16px; margin-bottom: 16px; }
-      .statusbox { padding: 12px 16px; min-width: 280px; }
-      .topbar {
-        display:flex;
-        gap:12px;
-        align-items:center;
-        justify-content:space-between;
-        margin-bottom:18px;
-        flex-wrap:wrap;
+      .titlebox { min-width: 280px; flex: 1 1 320px; }
+      .controlbox { flex: 2 1 560px; }
+      .statusbox { min-width: 280px; flex: 1 1 320px; }
+      .app-title {
+        font-size: clamp(1.4rem, 2.4vw, 2rem);
+        font-weight: 700;
+        margin: 0 0 4px 0;
       }
-      .controls {
-        display:flex;
-        gap:10px;
-        align-items:center;
-        flex-wrap:wrap;
+      .subtitle { margin: 0; color: var(--muted); }
+      .controls-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 10px;
+        align-items: end;
       }
+      .form-group { margin-bottom: 0; }
       .btn, .btn-default, .btn-primary {
-        background: var(--nuees-paper) !important;
-        color: var(--nuees-ink) !important;
-        border: 1px solid rgba(109,129,99,0.45) !important;
         border-radius: 999px !important;
-        padding: 8px 16px !important;
-        box-shadow: 0 4px 14px rgba(80,90,70,0.10);
+        border: 1px solid rgba(255,255,255,0.25) !important;
+        background: rgba(255,255,255,0.14) !important;
+        color: white !important;
       }
-      .btn:hover { background: #fffdf9 !important; }
-      .board-row {
-        display:flex;
-        align-items:flex-start;
-        justify-content:space-between;
-        gap:24px;
-        margin-bottom:18px;
-        flex-wrap:nowrap;
+      .btn:hover { background: rgba(255,255,255,0.22) !important; }
+      .help-text { color: var(--muted); font-size: 0.92rem; line-height: 1.35; }
+      .status-row {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(70px, auto));
+        gap: 10px;
+        margin-bottom: 8px;
       }
-      .left-group, .right-group {
-        display:flex;
-        flex-direction:row;
-        align-items:flex-start;
-        gap:12px;
-        flex-wrap:nowrap;
+      .metric {
+        background: rgba(255,255,255,0.08);
+        border-radius: 12px;
+        padding: 8px 10px;
+        text-align: center;
+      }
+      .metric .label { font-size: 0.78rem; color: var(--muted); }
+      .metric .value { font-size: 1.15rem; font-weight: 700; }
+      .message-line {
+        min-height: 24px;
+        font-size: 0.95rem;
+      }
+      .board-top {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 26px;
+        align-items: start;
+        margin-bottom: 18px;
+      }
+      .stock-waste {
+        display: flex;
+        gap: 14px;
+        align-items: flex-start;
+      }
+      .foundations {
+        display: flex;
+        gap: 14px;
+        justify-content: flex-end;
+        flex-wrap: wrap;
       }
       .tableau-row {
-        display:flex;
-        gap:var(--tableau-gap);
-        align-items:flex-start;
-        overflow-x:auto;
-        overflow-y:visible;
-        padding-bottom:10px;
-        -webkit-overflow-scrolling: touch;
+        display: grid;
+        grid-template-columns: repeat(7, minmax(110px, 1fr));
+        gap: 12px;
+        align-items: start;
       }
       .tableau-col {
-        width: var(--card-width);
-        min-width: var(--card-width);
-        min-height: var(--card-height);
-      }
-      .top-pile-slot {
-        width: var(--card-width);
-        min-width: var(--card-width);
-      }
-      .card, .foundation-empty, .tableau-empty {
-        width: var(--card-width);
-        height: var(--card-height);
-        border-radius: 14px;
-        background: var(--nuees-paper);
-        border: 1px solid rgba(71, 88, 72, 0.16);
-        box-shadow: 0 10px 18px var(--nuees-shadow);
-        position:relative;
-        cursor:pointer;
-        user-select:none;
-        overflow:hidden;
-        transition: transform .12s ease, box-shadow .12s ease, outline-color .12s ease;
-      }
-      .card::after {
-        content:'';
-        position:absolute;
-        inset:0;
-        background: linear-gradient(180deg, rgba(255,255,255,0.34), transparent 16%, transparent 84%, rgba(181,107,92,0.06));
-        pointer-events:none;
-      }
-      .card:hover, .foundation-empty:hover, .tableau-empty:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 14px 24px rgba(50,60,50,0.18);
-      }
-      .selected { outline: 4px solid rgba(208,177,115,0.75); }
-      .dragging { opacity: 0.55; transform: rotate(2deg); }
-      .drop-hover { outline: 4px dashed rgba(109,129,99,0.72); }
-      .placeholder, .foundation-empty, .tableau-empty, .recycle {
-        background: rgba(255,249,240,0.55);
-        border: 2px dashed rgba(109,129,99,0.42);
-        box-shadow: none;
-      }
-      .foundation-empty, .tableau-empty, .recycle {
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        font-size:36px;
-        color:#66735f;
-      }
-      .card-back {
-        background: linear-gradient(135deg, #a1b091, #6c8162 55%, #506b57 100%);
-      }
-      .card-back::before {
-        content:'';
-        position:absolute;
-        inset:12px;
-        border-radius:12px;
-        border: 1px solid rgba(255,255,255,0.35);
-        background:
-          radial-gradient(circle at 25% 30%, rgba(255,255,255,.20), transparent 18%),
-          radial-gradient(circle at 70% 65%, rgba(255,255,255,.18), transparent 16%),
-          linear-gradient(45deg, rgba(255,255,255,.08) 25%, transparent 25%, transparent 50%, rgba(255,255,255,.08) 50%, rgba(255,255,255,.08) 75%, transparent 75%);
-        background-size: auto, auto, 22px 22px;
-      }
-      .card-img {
-        width:100%;
-        height:100%;
-        object-fit: cover;
-        display:block;
-      }
-      .fallback-back {
-        width:100%;
-        height:100%;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        font-size:48px;
-        color:white;
-      }
-      .fallback-rank { position:absolute; font-weight:700; font-size:16px; z-index:1; }
-      .fallback-rank.tl { top:9px; left:10px; }
-      .fallback-rank.br { bottom:9px; right:10px; transform: rotate(180deg); }
-      .fallback-center {
-        position:absolute;
-        top:50%;
-        left:50%;
-        transform:translate(-50%, -50%);
-        font-size:24px;
-        font-weight:700;
-        z-index:1;
-      }
-      .tableau-card-wrap {
+        min-height: calc(var(--card-height) + 180px);
         position: relative;
-        margin-top: var(--tableau-face-up-overlap);
       }
       .tableau-card-wrap.first-card { margin-top: 0; }
-      .tableau-card-wrap.face-down-card { margin-top: var(--tableau-face-down-overlap); }
-      .tableau-card-wrap.face-down-card .card {
-        box-shadow: 0 4px 10px rgba(50,60,50,0.14);
+      .tableau-card-wrap.face-down-card { margin-top: calc(var(--overlap-down) * -1); }
+      .tableau-card-wrap.face-up-card { margin-top: calc(var(--overlap-up) * -1); }
+      .tableau-card-wrap:first-child { margin-top: 0 !important; }
+      .sol-card {
+        width: var(--card-width);
+        height: var(--card-height);
+        border-radius: 10px;
+        background: #ffffff;
+        border: 1px solid rgba(17,24,39,0.20);
+        box-shadow: 0 5px 12px var(--shadow);
+        overflow: hidden;
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        user-select: none;
+        transition: transform 0.08s ease, box-shadow 0.08s ease, outline 0.08s ease;
       }
-      .tableau-title {
-        margin: 8px 0 10px;
-        font-variant: small-caps;
-        letter-spacing: .04em;
-        color: #4e5d56;
+      .sol-card:hover { transform: translateY(-1px); }
+      .sol-card.selected {
+        outline: 3px solid #facc15;
+        outline-offset: 2px;
+        box-shadow: 0 0 0 4px rgba(250, 204, 21, 0.15), 0 6px 16px var(--shadow);
       }
-      .footer-note {
-        margin-top: 18px;
-        color: #5e6b65;
-        font-size: 0.95em;
+      .sol-card.placeholder,
+      .sol-card.foundation-empty,
+      .sol-card.tableau-empty,
+      .sol-card.recycle {
+        background: rgba(255,255,255,0.08);
+        border: 2px dashed rgba(255,255,255,0.28);
+        color: rgba(255,255,255,0.80);
       }
-
-      @media (min-width: 900px) {
+      .sol-card.recycle { font-size: 2rem; }
+      .card-back {
+        background: linear-gradient(135deg, #174ea6, #0b2f6a);
+      }
+      .card-img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+        pointer-events: none;
+      }
+      .fallback-back {
+        color: white;
+        font-size: 2rem;
+      }
+      .fallback-rank {
+        position: absolute;
+        font-size: 0.95rem;
+        font-weight: 700;
+        line-height: 1.05;
+      }
+      .fallback-rank.tl { top: 8px; left: 8px; }
+      .fallback-rank.br { bottom: 8px; right: 8px; transform: rotate(180deg); }
+      .fallback-center {
+        font-size: 1.7rem;
+        font-weight: 700;
+      }
+      .dropzone.can-drop {
+        box-shadow: 0 0 0 3px rgba(59,130,246,0.45), 0 6px 18px var(--shadow);
+      }
+      .dropzone.drop-hover {
+        box-shadow: 0 0 0 4px rgba(250,204,21,0.65), 0 6px 18px var(--shadow);
+      }
+      .footer-help {
+        margin-top: 16px;
+        background: rgba(255,255,255,0.08);
+        border: 1px solid rgba(255,255,255,0.15);
+        border-radius: 16px;
+        padding: 12px 14px;
+        color: var(--muted);
+      }
+      @media (max-width: 1100px) {
         :root {
-          --card-width: 104px;
-          --card-height: 146px;
-          --tableau-face-down-overlap: 4px;
-          --tableau-face-up-overlap: 20px;
-          --tableau-gap: 12px;
+          --card-width: 86px;
+          --card-height: 120px;
+          --overlap-down: 108px;
+          --overlap-up: 24px;
         }
+        .tableau-row { grid-template-columns: repeat(7, minmax(92px, 1fr)); }
       }
-
-      @media (min-width: 1200px) {
-        :root {
-          --card-width: 112px;
-          --card-height: 157px;
-          --tableau-face-down-overlap: 4px;
-          --tableau-face-up-overlap: 20px;
-          --tableau-gap: 14px;
-        }
-      }
-
-      @media (max-width: 768px) {
-        :root {
-          --card-width: 78px;
-          --card-height: 109px;
-          --tableau-face-down-overlap: 3px;
-          --tableau-face-up-overlap: 16px;
-          --tableau-gap: 8px;
-        }
-
-        .container-fluid {
-          padding-top: 8px;
-          padding-bottom: 16px;
-          padding-left: 6px;
-          padding-right: 6px;
-        }
-
-        .app-shell {
-          padding: 12px 10px 16px;
-          border-radius: 18px;
-        }
-
-        .subtitle,
-        .help,
-        .footer-note,
-        .statusbox {
-          font-size: 0.95rem;
-        }
-
-        .topbar {
-          flex-direction: column;
-          align-items: stretch;
-          gap: 10px;
-        }
-
-        .controls {
-          width: 100%;
-          justify-content: space-between;
-        }
-
-        .btn, .btn-default, .btn-primary {
-          flex: 1 1 auto;
-          min-height: 44px;
-          padding: 10px 14px !important;
-          font-size: 16px !important;
-        }
-
-        .statusbox {
-          min-width: 100%;
-        }
-
-        .board-row {
-          justify-content: space-between;
-          gap: 10px;
-          flex-wrap: nowrap;
+      @media (max-width: 860px) {
+        .board-top { grid-template-columns: 1fr; }
+        .foundations { justify-content: flex-start; }
+        .tableau-row {
           overflow-x: auto;
-          padding-bottom: 4px;
+          display: flex;
+          gap: 10px;
+          padding-bottom: 6px;
         }
-
-        .left-group, .right-group {
-          gap: 8px;
-          flex-wrap: nowrap;
-        }
-
-        .foundation-empty, .tableau-empty, .recycle {
-          font-size: 28px;
-        }
-
-        .fallback-rank {
-          font-size: 13px;
-        }
-
-        .fallback-center {
-          font-size: 20px;
-        }
-      }
-
-      @media (hover: none) and (pointer: coarse) {
-        .card:hover, .foundation-empty:hover, .tableau-empty:hover {
-          transform: none;
-          box-shadow: 0 10px 18px var(--nuees-shadow);
-        }
+        .tableau-col { min-width: 90px; }
       }
     ")),
     tags$script(HTML(" 
-      document.addEventListener('DOMContentLoaded', function () {
-        let currentDrag = null;
-        const isCoarsePointer = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+      document.addEventListener('DOMContentLoaded', function() {
+        let dragPayload = null;
 
-        document.documentElement.classList.toggle('touch-device', isCoarsePointer);
+        function safeParse(txt) {
+          try { return JSON.parse(txt); } catch(e) { return null; }
+        }
+
+        function clearDropHints() {
+          document.querySelectorAll('.dropzone').forEach(el => {
+            el.classList.remove('can-drop');
+            el.classList.remove('drop-hover');
+          });
+        }
 
         document.addEventListener('dragstart', function(e) {
-          const el = e.target.closest('.draggable-card');
-          if (!el || isCoarsePointer) return;
-          currentDrag = el.dataset.drag || null;
-          e.dataTransfer.setData('text/plain', currentDrag || '');
-          e.dataTransfer.effectAllowed = 'move';
-          el.classList.add('dragging');
+          const el = e.target.closest('[data-drag]');
+          if (!el) return;
+          dragPayload = safeParse(el.dataset.drag);
+          if (e.dataTransfer) {
+            e.dataTransfer.setData('text/plain', el.dataset.drag);
+            e.dataTransfer.effectAllowed = 'move';
+          }
+          document.querySelectorAll('.dropzone').forEach(z => z.classList.add('can-drop'));
         });
 
-        document.addEventListener('dragend', function(e) {
-          const el = e.target.closest('.draggable-card');
-          if (el) el.classList.remove('dragging');
-          document.querySelectorAll('.drop-hover').forEach(x => x.classList.remove('drop-hover'));
+        document.addEventListener('dragend', function() {
+          dragPayload = null;
+          clearDropHints();
         });
 
         document.addEventListener('dragover', function(e) {
           const zone = e.target.closest('.dropzone');
-          if (!zone || !currentDrag || isCoarsePointer) return;
+          if (!zone) return;
           e.preventDefault();
-          e.dataTransfer.dropEffect = 'move';
-        });
-
-        document.addEventListener('dragenter', function(e) {
-          const zone = e.target.closest('.dropzone');
-          if (!zone || !currentDrag || isCoarsePointer) return;
           zone.classList.add('drop-hover');
         });
 
         document.addEventListener('dragleave', function(e) {
           const zone = e.target.closest('.dropzone');
           if (!zone) return;
-          if (!zone.contains(e.relatedTarget)) zone.classList.remove('drop-hover');
+          zone.classList.remove('drop-hover');
         });
 
         document.addEventListener('drop', function(e) {
           const zone = e.target.closest('.dropzone');
-          if (!zone || !currentDrag || isCoarsePointer) return;
+          if (!zone) return;
           e.preventDefault();
-          zone.classList.remove('drop-hover');
-          const payload = JSON.stringify({ source: JSON.parse(currentDrag), target: JSON.parse(zone.dataset.drop) });
-          Shiny.setInputValue('drag_move', payload, {priority: 'event'});
-          currentDrag = null;
+          const target = safeParse(zone.dataset.drop || '');
+          const source = dragPayload || safeParse(e.dataTransfer ? e.dataTransfer.getData('text/plain') : '');
+          clearDropHints();
+          dragPayload = null;
+          if (!source || !target) return;
+          if (window.Shiny) {
+            Shiny.setInputValue('drag_move', { source: source, target: target, nonce: Date.now() }, {priority: 'event'});
+          }
         });
       });
     "))
   ),
-
-  div(class = "app-shell",
-      h2("Solitaire — à développer pour Nuées"),
-      div(class = "subtitle", "Texte à ajouter."),
-      div(class = "help",
-          HTML('<strong>Contexte :</strong> texte à ajouter.<br><br>
-               <strong>Utilisation :</strong> sur ordinateur, clique ou glisse-dépose une carte / pile visible. Sur smartphone, le mode recommandé est le clic pour sélectionner puis le clic sur la destination. <br>
-               On peut aussi ajouter des liens comme <a href="https://nuees.net/jeux/" target="_blank">jeu Nuées</a>')
+  div(
+    class = "shell",
+    div(
+      class = "topbar",
+      div(
+        class = "titlebox",
+        div(class = "app-title", "Solitaire Klondike"),
+        p(class = "subtitle", "Version Shiny réécrite, proche du Solitaire Windows classique, avec thèmes de cartes personnalisables via dossiers PNG.")
       ),
-      div(class = "topbar",
-          div(class = "controls",
-              actionButton("new_game", "Nouvelle partie"),
-              actionButton("clear_sel", "Désélectionner")
-          ),
-          div(class = "statusbox", textOutput("status", inline = TRUE))
+      div(
+        class = "controlbox",
+        div(
+          class = "controls-grid",
+          div(actionButton("new_game", "Nouvelle partie", width = "100%")),
+          div(selectInput("draw_n", "Tirage", choices = c("1 carte" = 1, "3 cartes" = 3), selected = 3, width = "100%")),
+          div(uiOutput("theme_ui"))
+        ),
+        div(class = "help-text", HTML("Texte à ajouter."))
       ),
-      div(class = "board-row",
-          div(class = "left-group",
-              div(class = "top-pile-slot", uiOutput("stock_ui")),
-              div(class = "top-pile-slot", uiOutput("waste_ui"))
-          ),
-          div(class = "right-group",
-              div(class = "top-pile-slot", uiOutput("foundation_S")),
-              div(class = "top-pile-slot", uiOutput("foundation_H")),
-              div(class = "top-pile-slot", uiOutput("foundation_D")),
-              div(class = "top-pile-slot", uiOutput("foundation_C"))
-          )
-      ),
-      div(class = "tableau-title", "Tableau"),
-      div(class = "tableau-row",
-          uiOutput("tab_1"), uiOutput("tab_2"), uiOutput("tab_3"), uiOutput("tab_4"),
-          uiOutput("tab_5"), uiOutput("tab_6"), uiOutput("tab_7")),
-      div(class = "footer-note", "Images conseillées : ratio proche de 118×165, idéalement en PNG, mais JPG/JPEG sont aussi acceptés dans cette version.")
+      div(
+        class = "statusbox",
+        div(class = "status-row",
+            #div(class = "metric", div(class = "label", "Score"), textOutput("score", inline = TRUE)),
+            #div(class = "metric", div(class = "label", "Coups"), textOutput("moves", inline = TRUE)),
+            #div(class = "metric", div(class = "label", "Temps"), textOutput("elapsed", inline = TRUE))
+        ),
+        div(class = "message-line", textOutput("message", inline = TRUE))
+      )
+    ),
+    div(
+      class = "board-top",
+      div(class = "stock-waste", uiOutput("stock_ui"), uiOutput("waste_ui")),
+      div(class = "foundations", lapply(suits, function(s) uiOutput(paste0("foundation_", s))))
+    ),
+    div(class = "tableau-row", lapply(1:7, function(i) uiOutput(paste0("tableau_", i)))),
+    div(
+      class = "footer-help",
+      HTML("<strong>Utilisation :</strong> cliquez sur le talon pour tirer. Cliquez sur une carte pour la sélectionner puis sur une destination, ou cliquez une deuxième fois sur la même carte pour tenter un déplacement automatique. Le glisser-déposer fonctionne aussi. <br><strong>Limite honnête :</strong> cette version cherche à reproduire le Solitaire Windows de très près, mais pas pixel par pixel ni avec toutes les animations natives de Microsoft.")
+    )
   )
 )
 
-# =========================
+# -----------------------------
 # Server
-# =========================
-
+# -----------------------------
 server <- function(input, output, session) {
-  state <- reactiveVal(new_game_state())
+  rv <- reactiveValues(
+    state = new_game_state(draw_n = 3)
+  )
 
-  output$status <- renderText({
-    st <- state()
-    if (check_win(st)) paste0("Bravo, partie gagnée ! ", st$message) else st$message
+  timer <- reactiveTimer(1000)
+
+  theme_choices <- reactive({
+    unique(c("classic", available_themes()))
   })
 
-  observeEvent(input$new_game, { state(new_game_state()) })
-
-  observeEvent(input$clear_sel, {
-    st <- state(); st$selected <- NULL; st$message <- "Sélection effacée."; state(st)
+  output$theme_ui <- renderUI({
+    selectInput(
+      "theme_name",
+      "Thème de cartes",
+      choices = setNames(theme_choices(), theme_choices()),
+      selected = if (!is.null(input$theme_name) && input$theme_name %in% theme_choices()) input$theme_name else "classic",
+      width = "100%"
+    )
   })
 
-  output$stock_ui <- renderUI(render_stock(state()))
-  output$waste_ui <- renderUI(render_waste(state()))
-  output$foundation_S <- renderUI(render_foundation(state(), "S"))
-  output$foundation_H <- renderUI(render_foundation(state(), "H"))
-  output$foundation_D <- renderUI(render_foundation(state(), "D"))
-  output$foundation_C <- renderUI(render_foundation(state(), "C"))
-  for (i in 1:7) local({
-    ii <- i
-    output[[paste0("tab_", ii)]] <- renderUI(render_tableau_col(state(), ii))
+  observeEvent(input$new_game, {
+    rv$state <- new_game_state(draw_n = as.integer(input$draw_n))
   })
 
-  observeEvent(input$drag_move, {
-    payload <- tryCatch(fromJSON(input$drag_move), error = function(e) NULL)
-    if (is.null(payload) || is.null(payload$source) || is.null(payload$target)) return()
-    st <- state()
-    st <- apply_drag_move(st, payload$source, payload$target)
-    st$selected <- NULL
-    state(st)
+  observeEvent(input$draw_n, {
+    current <- rv$state
+    rv$state <- new_game_state(draw_n = as.integer(input$draw_n))
+    rv$state$message <- paste("Nouvelle partie en mode tirage", input$draw_n)
+  }, ignoreInit = TRUE)
+
+
+  current_theme <- reactive({
+    if (!is.null(input$theme_name)) return(input$theme_name)
+    "classic"
+  })
+
+  current_session_theme_dir <- reactive({
+    NULL
+  })
+
+  output$score <- renderText(rv$state$score)
+  output$moves <- renderText(rv$state$moves)
+  output$message <- renderText(rv$state$message)
+  output$elapsed <- renderText({
+    timer()
+    secs <- max(0, as.integer(difftime(Sys.time(), rv$state$started_at, units = "secs")))
+    sprintf("%02d:%02d", secs %/% 60, secs %% 60)
+  })
+
+  output$stock_ui <- renderUI({
+    render_stock(rv$state, current_theme(), current_session_theme_dir())
+  })
+  output$waste_ui <- renderUI({
+    render_waste(rv$state, current_theme(), current_session_theme_dir())
+  })
+
+  lapply(suits, function(s) {
+    output[[paste0("foundation_", s)]] <- renderUI({
+      render_foundation(rv$state, s, current_theme(), current_session_theme_dir())
+    })
+  })
+
+  lapply(1:7, function(i) {
+    output[[paste0("tableau_", i)]] <- renderUI({
+      render_tableau(rv$state, i, current_theme(), current_session_theme_dir())
+    })
   })
 
   observeEvent(input$card_click, {
-    click <- input$card_click
-    st <- state()
-
-    if (identical(click, "stock")) {
-      st$selected <- NULL
-      if (length(st$stock) > 0) {
-        card_id <- tail(st$stock, 1)
-        st$stock <- head(st$stock, -1)
-        st$waste <- c(st$waste, card_id)
-        st$message <- paste("Carte tirée :", card_id)
-      } else if (length(st$waste) > 0) {
-        st$stock <- rev(st$waste)
-        st$waste <- character(0)
-        st$message <- "La défausse est remise dans la pioche."
-      } else {
-        st$message <- "Aucune carte à tirer."
-      }
-      state(st); return()
+    rv$state <- handle_click(rv$state, input$card_click)
+    if (is_won(rv$state)) {
+      rv$state$message <- "Bravo, partie gagnée !"
+      rv$state$score <- rv$state$score + 100
     }
+  })
 
-    if (grepl("^foundation:", click)) {
-      suit <- sub("^foundation:", "", click)
-      if (is.null(st$selected)) {
-        if (length(st$foundations[[suit]]) > 0) {
-          st$selected <- list(type = "foundation", suit = suit)
-          st$message <- paste("Fondation sélectionnée :", suit)
-        } else st$message <- paste("Fondation vide :", suit)
-        state(st); return()
-      }
-      st <- apply_drag_move(st, st$selected, list(target_type = "foundation", suit = suit))
-      st$selected <- NULL
-      state(st); return()
-    }
-
-    if (identical(click, "waste")) {
-      if (length(st$waste) == 0) {
-        st$message <- "Défausse vide."
-      } else if (is.null(st$selected)) {
-        st$selected <- list(type = "waste")
-        st$message <- paste("Carte sélectionnée :", top_card(st$waste))
-      } else {
-        st$selected <- NULL
-        st$message <- "Sélection effacée."
-      }
-      state(st); return()
-    }
-
-    if (grepl("^tableau:", click)) {
-      parts <- strsplit(click, ":")[[1]]
-      col <- as.integer(parts[2])
-
-      if (identical(parts[3], "empty")) {
-        if (is.null(st$selected)) {
-          st$message <- "Colonne vide."
-        } else {
-          st <- apply_drag_move(st, st$selected, list(target_type = "tableau", col = col))
-          st$selected <- NULL
-        }
-        state(st); return()
-      }
-
-      idx <- as.integer(parts[3])
-      pile <- st$tableau[[col]]
-
-      if (!pile$up[idx]) {
-        if (idx == length(pile$ids)) {
-          pile$up[idx] <- TRUE
-          st$tableau[[col]] <- pile
-          st$message <- paste("Carte retournée dans la colonne", col)
-        } else {
-          st$message <- "Cette carte n'est pas accessible."
-        }
-        state(st); return()
-      }
-
-      if (is.null(st$selected)) {
-        st$selected <- list(type = "tableau", col = col, idx = idx)
-        st$message <- paste("Sélection :", pile$ids[idx], "dans colonne", col)
-        state(st); return()
-      }
-
-      if (identical(st$selected$type, "tableau") && st$selected$col == col && st$selected$idx == idx) {
-        st$selected <- NULL
-        st$message <- "Sélection effacée."
-        state(st); return()
-      }
-
-      st <- apply_drag_move(st, st$selected, list(target_type = "tableau", col = col))
-      st$selected <- NULL
-      state(st); return()
+  observeEvent(input$drag_move, {
+    req(input$drag_move$source, input$drag_move$target)
+    rv$state <- apply_drag_move(rv$state, input$drag_move$source, input$drag_move$target)
+    rv$state$selected <- NULL
+    if (is_won(rv$state)) {
+      rv$state$message <- "Bravo, partie gagnée !"
+      rv$state$score <- rv$state$score + 100
     }
   })
 }
