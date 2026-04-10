@@ -1,7 +1,5 @@
 # Solitaire Shiny — version packagée
 
-Ce dossier contient une application **Shiny** de **Solitaire Klondike** inspirée du Solitaire Windows classique.
-
 ## Contenu
 
 - `app.R` : l'application principale
