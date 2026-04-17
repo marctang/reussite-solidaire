@@ -490,9 +490,11 @@
       if (faceUp) {
         const img = document.createElement("img");
         img.className = "card-image";
-        img.alt = cardLabel(cardId);
+        img.alt = "";
+        img.setAttribute("aria-hidden", "true");
         img.src = assetUrl(cardId);
         img.draggable = false;
+        el.setAttribute("aria-label", cardLabel(cardId));
         img.onerror = () => {
           img.remove();
           if (!el.querySelector(".fallback")) el.appendChild(buildFallbackCard(card));
@@ -501,7 +503,8 @@
       } else {
         const img = document.createElement("img");
         img.className = "card-image";
-        img.alt = "Dos de carte";
+        img.alt = "";
+        img.setAttribute("aria-hidden", "true");
         img.src = assetUrl(null, true);
         img.draggable = false;
         img.onerror = () => {
