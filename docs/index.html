@@ -2,63 +2,63 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Solitaire Klondike</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Réussite solidaire</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div class="shell">
-    <header class="topbar">
-      <section class="panel titlebox">
-        <h1>Solitaire Klondike</h1>
-        <p>Version statique HTML/CSS/JavaScript, légère et compatible GitHub Pages.</p>
-      </section>
+  <div class="page-wrap">
+    <div class="shell">
+      <header class="topbar">
+        <section class="panel titlebox">
+          <h1 class="app-title">Réussite solidaire</h1>
+          <p class="subtitle">Version JavaScript statique, plus légère au chargement et pensée pour GitHub Pages.</p>
+        </section>
 
-      <section class="panel controlbox">
-        <div class="controls-grid">
-          <button id="new-game-btn">Nouvelle partie</button>
-          <label>
-            Tirage
-            <select id="draw-count">
-              <option value="1">1 carte</option>
-              <option value="3" selected>3 cartes</option>
-            </select>
-          </label>
-          <button id="auto-btn">Mouvement auto</button>
-        </div>
-        <p class="help-text">
-          Clique sur le talon pour tirer. Clique sur une carte puis sur une destination pour la déplacer.
-          Tu peux aussi glisser-déposer. Un second clic sur la même carte tente un déplacement automatique.
-        </p>
-      </section>
+        <section class="panel controlbox">
+          <div class="controls-grid">
+            <button id="new-game-btn" type="button">Nouvelle partie</button>
 
-      <section class="panel statusbox">
-        <div class="status-row">
-          <div class="metric"><span class="label">Score</span><span class="value" id="score">0</span></div>
-          <div class="metric"><span class="label">Coups</span><span class="value" id="moves">0</span></div>
-          <div class="metric"><span class="label">Temps</span><span class="value" id="elapsed">00:00</span></div>
-        </div>
-        <div id="message" class="message-line">Bienvenue !</div>
-      </section>
-    </header>
+            <label>
+              Tirage
+              <select id="draw-count">
+                <option value="1">1 carte</option>
+                <option value="3" selected>3 cartes</option>
+              </select>
+            </label>
 
-    <main class="board">
-      <section class="board-top">
-        <div class="foundations" id="foundations"></div>
-        <div class="board-spacer"></div>
-        <div class="stock-waste">
-          <div id="waste"></div>
-          <div id="stock"></div>
-        </div>
-      </section>
+            <button id="auto-btn" type="button">Mouvement auto</button>
+          </div>
 
-      <section class="tableau-row" id="tableau"></section>
-    </main>
+          <p class="help-text">
+            Clique sur le talon pour tirer. Clique sur une carte puis sur une destination pour la déplacer.
+            Tu peux aussi glisser-déposer. Un second clic sur la même carte tente un déplacement automatique.
+          </p>
+        </section>
 
-    <footer class="footer-help">
-      Cette version n’utilise ni Shiny ni WebR. GitHub Pages sert directement les fichiers HTML, CSS et JavaScript,
-      ce qui évite le temps de chargement du runtime R dans le navigateur. 
-    </footer>
+        <section class="panel statusbox">
+          <div class="status-row">
+            <div class="metric"><span class="label">Score</span><span class="value" id="score">0</span></div>
+            <div class="metric"><span class="label">Coups</span><span class="value" id="moves">0</span></div>
+            <div class="metric"><span class="label">Temps</span><span class="value" id="elapsed">00:00</span></div>
+          </div>
+          <div id="message" class="message-line">Bienvenue !</div>
+        </section>
+      </header>
+
+      <main class="board panel">
+        <section class="board-top">
+          <div class="foundations" id="foundations"></div>
+          <div class="board-spacer" aria-hidden="true"></div>
+          <div class="stock-waste">
+            <div id="waste"></div>
+            <div id="stock"></div>
+          </div>
+        </section>
+
+        <section class="tableau-row" id="tableau"></section>
+      </main>
+    </div>
   </div>
 
   <script src="game.js"></script>
