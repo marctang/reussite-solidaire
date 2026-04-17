@@ -587,12 +587,9 @@
     stockEl.innerHTML = "";
     if (state.stock.length) {
       const stack = document.createElement("div");
-      stack.className = "stock-stack";
-      stack.appendChild(Object.assign(document.createElement("div"), { className: "stock-shadow" }));
-      stack.appendChild(Object.assign(document.createElement("div"), { className: "stock-shadow offset-1" }));
-      stack.appendChild(Object.assign(document.createElement("div"), { className: "stock-shadow offset-2" }));
+      stack.className = "stock-stack single-image";
       const top = buildCardElement({ cardId: null, faceUp: false, clickable: true, onClick: handleClickStock });
-      top.classList.add("stock-top");
+      top.classList.add("stock-top", "stock-top-single");
       top.setAttribute("aria-label", "Pioche");
       const stockImg = document.createElement("img");
       stockImg.className = "stock-png";

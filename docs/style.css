@@ -342,3 +342,13 @@ input[type="range"] {
   background: transparent;
 }
 .stock-top.has-stock-image .fallback { display: none; }
+
+
+.stock-stack.single-image {
+  width: var(--card-width);
+  height: var(--card-height);
+}
+.stock-top-single {
+  left: 0;
+  top: 0;
+}
