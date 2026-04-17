@@ -590,9 +590,12 @@
       stack.appendChild(Object.assign(document.createElement("div"), { className: "stock-shadow offset-2" }));
       const top = buildCardElement({ cardId: null, faceUp: false, clickable: true, onClick: handleClickStock });
       top.classList.add("stock-top");
+      top.setAttribute("aria-label", "Pioche");
       const stockImg = document.createElement("img");
       stockImg.className = "stock-png";
-      stockImg.alt = "Pioche";
+      stockImg.alt = "";
+      stockImg.setAttribute("aria-hidden", "true");
+      stockImg.decoding = "async";
       stockImg.src = stockAssetUrl();
       stockImg.draggable = false;
       stockImg.onload = () => top.classList.add("has-stock-image");
