@@ -15,6 +15,10 @@
   const drawCountEl = document.getElementById("draw-count");
   const newGameBtn = document.getElementById("new-game-btn");
   const autoBtn = document.getElementById("auto-btn");
+  const overlapDownEl = document.getElementById("overlap-down");
+  const overlapUpEl = document.getElementById("overlap-up");
+  const overlapDownValueEl = document.getElementById("overlap-down-value");
+  const overlapUpValueEl = document.getElementById("overlap-up-value");
 
   let state = null;
   let timerId = null;
@@ -455,6 +459,23 @@
     return `assets/cards/default/${name}.png`;
   }
 
+  function stockAssetUrl() {
+    return `assets/cards/default/stock.png`;
+  }
+
+  function setCssVar(name, value) {
+    document.documentElement.style.setProperty(name, value);
+  }
+
+  function applyOverlapSettings() {
+    const down = Number(overlapDownEl?.value ?? 90);
+    const up = Number(overlapUpEl?.value ?? 72);
+    setCssVar("--overlap-down-percent", String(down));
+    setCssVar("--overlap-up-percent", String(up));
+    if (overlapDownValueEl) overlapDownValueEl.textContent = String(down);
+    if (overlapUpValueEl) overlapUpValueEl.textContent = String(up);
+  }
+
   function buildCardElement({ cardId = null, faceUp = true, placeholder = false, selected = false, clickable = false, onClick = null, draggable = false, dragData = null, dropData = null, emptyLabel = "" }) {
     let el;
     if (placeholder) {
@@ -569,6 +590,14 @@
       stack.appendChild(Object.assign(document.createElement("div"), { className: "stock-shadow offset-2" }));
       const top = buildCardElement({ cardId: null, faceUp: false, clickable: true, onClick: handleClickStock });
       top.classList.add("stock-top");
+      const stockImg = document.createElement("img");
+      stockImg.className = "stock-png";
+      stockImg.alt = "Pioche";
+      stockImg.src = stockAssetUrl();
+      stockImg.draggable = false;
+      stockImg.onload = () => top.classList.add("has-stock-image");
+      stockImg.onerror = () => stockImg.remove();
+      top.appendChild(stockImg);
       stack.appendChild(top);
       stockEl.appendChild(stack);
       return;
@@ -715,6 +744,8 @@
   }
 
   newGameBtn.addEventListener("click", newGame);
+  overlapDownEl?.addEventListener("input", () => { applyOverlapSettings(); renderTableau(); });
+  overlapUpEl?.addEventListener("input", () => { applyOverlapSettings(); renderTableau(); });
   drawCountEl.addEventListener("change", () => {
     state = createState(Number(drawCountEl.value));
     state.message = `Nouvelle partie en mode tirage ${drawCountEl.value}`;
@@ -730,5 +761,6 @@
     if (!event.target.closest("[data-drop]")) clearDropHints();
   });
 
+  applyOverlapSettings();
   newGame();
 })();

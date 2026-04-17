@@ -28,11 +28,24 @@
             </label>
 
             <button id="auto-btn" type="button">Mouvement auto</button>
+
+            <label>
+              Recouvrement cartes cachées
+              <input id="overlap-down" type="range" min="0" max="95" step="1" value="90" />
+              <span class="range-hint"><span id="overlap-down-value">90</span> %</span>
+            </label>
+
+            <label>
+              Recouvrement cartes visibles
+              <input id="overlap-up" type="range" min="0" max="95" step="1" value="72" />
+              <span class="range-hint"><span id="overlap-up-value">72</span> %</span>
+            </label>
           </div>
 
           <p class="help-text">
             Clique sur le talon pour tirer. Clique sur une carte puis sur une destination pour la déplacer.
             Tu peux aussi glisser-déposer. Un second clic sur la même carte tente un déplacement automatique.
+            Les curseurs permettent de régler le recouvrement des cartes dans les colonnes.
           </p>
         </section>
 

@@ -7,8 +7,10 @@
   --muted: rgba(255,255,255,0.78);
   --card-width: 100px;
   --card-height: 140px;
-  --overlap-down: 14px;
-  --overlap-up: 40px;
+  --overlap-down-percent: 90;
+  --overlap-up-percent: 72;
+  --overlap-down: calc(var(--card-height) * (100 - var(--overlap-down-percent)) / 100);
+  --overlap-up: calc(var(--card-height) * (100 - var(--overlap-up-percent)) / 100);
   --shadow: rgba(0,0,0,0.28);
   --radius: 12px;
 }
@@ -286,19 +288,22 @@ select:hover {
 .tableau-col {
   min-height: calc(var(--card-height) + 180px);
   position: relative;
+  width: var(--card-width);
+  justify-self: center;
 }
-.tableau-card-wrap.first-card { margin-top: 0 !important; }
-.tableau-card-wrap.face-down-card { margin-top: calc(var(--overlap-down) * -1); }
-.tableau-card-wrap.face-up-card { margin-top: calc(var(--overlap-up) * -1); }
-.tableau-card-wrap + .tableau-card-wrap.face-down-card { margin-top: calc(var(--overlap-down) * -1 + var(--card-height)); }
-.tableau-card-wrap + .tableau-card-wrap.face-up-card { margin-top: calc(var(--overlap-up) * -1 + var(--card-height)); }
+.tableau-card-wrap {
+  position: relative;
+  width: var(--card-width);
+}
+.tableau-card-wrap.first-card { margin-top: 0; }
+.tableau-card-wrap.face-down-card { margin-top: calc(-1 * (var(--card-height) - var(--overlap-down))); }
+.tableau-card-wrap.face-up-card { margin-top: calc(-1 * (var(--card-height) - var(--overlap-up))); }
+.tableau-card-wrap .card { position: relative; z-index: 1; }
 
 @media (max-width: 980px) {
   :root {
     --card-width: 82px;
     --card-height: 118px;
-    --overlap-down: 12px;
-    --overlap-up: 34px;
   }
 
   .board-top { grid-template-columns: 1fr; }
@@ -311,3 +316,29 @@ select:hover {
     padding-bottom: 6px;
   }
 }
+
+
+input[type="range"] {
+  width: 100%;
+  padding: 0;
+  background: transparent;
+}
+.range-hint {
+  font-size: 0.88rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+.stock-png {
+  position: absolute;
+  inset: 0;
+  width: var(--card-width);
+  height: var(--card-height);
+  object-fit: cover;
+  border-radius: 10px;
+  display: block;
+  z-index: 2;
+}
+.stock-top.has-stock-image {
+  background: transparent;
+}
+.stock-top.has-stock-image .fallback { display: none; }
