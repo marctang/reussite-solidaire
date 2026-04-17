@@ -2,118 +2,65 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Solitaire Klondike</title>
-  <style>
-    :root {
-      --bg1: #0d6b38;
-      --bg2: #0a4e2b;
-      --card: rgba(0,0,0,0.18);
-      --border: rgba(255,255,255,0.14);
-    }
-    html, body {
-      margin: 0;
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      background: var(--bg2);
-      font-family: Segoe UI, Arial, sans-serif;
-    }
-    #loader {
-      position: fixed;
-      inset: 0;
-      z-index: 2147483647;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
-      color: white;
-      text-align: center;
-      padding: 24px;
-      transition: opacity 250ms ease;
-    }
-    .loading-card {
-      text-align: center;
-      padding: 24px 28px;
-      border-radius: 20px;
-      background: var(--card);
-      border: 1px solid var(--border);
-      box-shadow: 0 18px 40px rgba(0,0,0,0.22);
-      max-width: 520px;
-    }
-    .loading-spinner {
-      width: 44px;
-      height: 44px;
-      margin: 0 auto 14px;
-      border-radius: 50%;
-      border: 4px solid rgba(255,255,255,0.25);
-      border-top-color: #fff;
-      animation: spin 0.9s linear infinite;
-    }
-    .loading-sub {
-      opacity: 0.88;
-      font-size: 14px;
-      line-height: 1.45;
-      margin-top: 8px;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    #appframe {
-      position: fixed;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      border: 0;
-      display: block;
-      opacity: 0;
-      background: var(--bg2);
-      transition: opacity 220ms ease;
-    }
-  </style>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div id="loader" aria-live="polite">
-    <div class="loading-card">
-      <div class="loading-spinner"></div>
-      <div><strong>Chargement du solitaire…</strong></div>
-      <div class="loading-sub">
-        Le premier démarrage peut prendre quelques secondes pendant le chargement de WebR / Shinylive.
-      </div>
-    </div>
+  <div class="shell">
+    <header class="topbar">
+      <section class="panel titlebox">
+        <h1>Solitaire Klondike</h1>
+        <p>Version statique HTML/CSS/JavaScript, légère et compatible GitHub Pages.</p>
+      </section>
+
+      <section class="panel controlbox">
+        <div class="controls-grid">
+          <button id="new-game-btn">Nouvelle partie</button>
+          <label>
+            Tirage
+            <select id="draw-count">
+              <option value="1">1 carte</option>
+              <option value="3" selected>3 cartes</option>
+            </select>
+          </label>
+          <button id="auto-btn">Mouvement auto</button>
+        </div>
+        <p class="help-text">
+          Clique sur le talon pour tirer. Clique sur une carte puis sur une destination pour la déplacer.
+          Tu peux aussi glisser-déposer. Un second clic sur la même carte tente un déplacement automatique.
+        </p>
+      </section>
+
+      <section class="panel statusbox">
+        <div class="status-row">
+          <div class="metric"><span class="label">Score</span><span class="value" id="score">0</span></div>
+          <div class="metric"><span class="label">Coups</span><span class="value" id="moves">0</span></div>
+          <div class="metric"><span class="label">Temps</span><span class="value" id="elapsed">00:00</span></div>
+        </div>
+        <div id="message" class="message-line">Bienvenue !</div>
+      </section>
+    </header>
+
+    <main class="board">
+      <section class="board-top">
+        <div class="foundations" id="foundations"></div>
+        <div class="board-spacer"></div>
+        <div class="stock-waste">
+          <div id="waste"></div>
+          <div id="stock"></div>
+        </div>
+      </section>
+
+      <section class="tableau-row" id="tableau"></section>
+    </main>
+
+    <footer class="footer-help">
+      Cette version n’utilise ni Shiny ni WebR. GitHub Pages sert directement les fichiers HTML, CSS et JavaScript,
+      ce qui évite le temps de chargement du runtime R dans le navigateur. 
+    </footer>
   </div>
 
-  <iframe
-    id="appframe"
-    src="./app/index.html"
-    title="Solitaire"
-    loading="eager"
-    referrerpolicy="no-referrer"
-  ></iframe>
-
-  <script>
-    (function () {
-      const frame = document.getElementById('appframe');
-      const loader = document.getElementById('loader');
-      let finished = false;
-
-      function revealApp() {
-        if (finished) return;
-        finished = true;
-        frame.style.opacity = '1';
-        loader.style.opacity = '0';
-        setTimeout(() => {
-          if (loader && loader.parentNode) loader.parentNode.removeChild(loader);
-        }, 320);
-      }
-
-      frame.addEventListener('load', function () {
-        setTimeout(revealApp, 250);
-      });
-
-      // Fallback: if the frame is alive but slow to fully initialize, keep the loader
-      // visible a bit longer, then reveal the app anyway.
-      setTimeout(revealApp, 9000);
-    })();
-  </script>
+  <script src="game.js"></script>
 </body>
 </html>
