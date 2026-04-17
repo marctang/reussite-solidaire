@@ -2,8 +2,7 @@
   const SUITS = ["S", "H", "D", "C"];
   const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
   const SUIT_SYMBOL = { S: "♠", H: "♥", D: "♦", C: "♣" };
-  const FOUNDATION_PLACEHOLDERS = { S: "♠", H: "♥", D: "♦", C: "♣" };
-
+  
   const stockEl = document.getElementById("stock");
   const wasteEl = document.getElementById("waste");
   const foundationsEl = document.getElementById("foundations");
@@ -463,6 +462,10 @@
     return `assets/cards/default/stock.png`;
   }
 
+  function foundationAssetUrl(suit) {
+    return `assets/cards/default/foundation_${suit}.png`;
+  }
+
   function setCssVar(name, value) {
     document.documentElement.style.setProperty(name, value);
   }
@@ -649,7 +652,17 @@
       if (!pile.length) {
         const empty = document.createElement("div");
         empty.className = "foundation-empty";
-        empty.textContent = FOUNDATION_PLACEHOLDERS[suit];
+
+        const img = document.createElement("img");
+        img.className = "foundation-placeholder-image";
+        img.alt = "";
+        img.setAttribute("aria-hidden", "true");
+        img.decoding = "async";
+        img.src = foundationAssetUrl(suit);
+        img.draggable = false;
+        img.onerror = () => img.remove();
+        empty.appendChild(img);
+
         empty.dataset.drop = JSON.stringify({ targetType: "foundation", suit });
         empty.addEventListener("click", () => handleClickFoundation(suit));
         wireDropzone(empty);
