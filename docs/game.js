@@ -12,6 +12,7 @@
   const elapsedEl = document.getElementById("elapsed");
   const messageEl = document.getElementById("message");
   const drawCountEl = document.getElementById("draw-count");
+  const difficultyEl = document.getElementById("difficulty");
   const newGameBtn = document.getElementById("new-game-btn");
   const autoBtn = document.getElementById("auto-btn");
   const overlapDownEl = document.getElementById("overlap-down");
@@ -63,7 +64,7 @@
     return copy;
   }
 
-  function createState(drawCount = 3) {
+  function createState(drawCount = 3, difficulty = "normal") {
     const deck = makeDeck();
     const deckMap = Object.fromEntries(deck.map(card => [card.id, card]));
     const shuffled = shuffle(deck.map(c => c.id));
@@ -72,7 +73,8 @@
     let pos = 0;
     for (let i = 1; i <= 7; i++) {
       const ids = shuffled.slice(pos, pos + i);
-      const up = Array(i - 1).fill(false).concat(true);
+      const hiddenCount = difficulty === "easy" ? Math.max(0, i - 3) : i - 1;
+      const up = Array(hiddenCount).fill(false).concat(Array(i - hiddenCount).fill(true));
       tableau.push({ ids, up });
       pos += i;
     }
@@ -80,6 +82,7 @@
     return {
       deckMap,
       drawCount,
+      difficulty,
       stock: shuffled.slice(pos),
       waste: [],
       foundations: { S: [], H: [], D: [], C: [] },
@@ -264,6 +267,69 @@
       if (pile.ids.length && canPlaceOnTableau(movingId, topCard(pile.ids))) return col;
     }
     return null;
+  }
+
+  function describeMoveSuggestion(move) {
+    if (!move) return "Aucun déplacement évident trouvé.";
+    const card = cardLabel(move.cardId);
+    if (move.targetType === "foundation") return `${card} peut aller en fondation ${SUIT_SYMBOL[move.suit]}.`;
+    return `${card} peut aller vers la colonne ${move.targetCol + 1}.`;
+  }
+
+  function findAnyHelpfulMove() {
+    // 1. Priorité aux fondations, car ce sont les coups les plus sûrs pour débloquer la partie.
+    const wasteTop = topCard(state.waste);
+    if (wasteTop) {
+      const suit = getCard(wasteTop).suit;
+      if (canPlaceOnFoundation(wasteTop, suit)) return { type: "waste", cardId: wasteTop, targetType: "foundation", suit };
+    }
+
+    for (let col = 0; col < 7; col++) {
+      const pile = state.tableau[col];
+      const cardId = topCard(pile.ids);
+      if (!cardId || !pile.up[pile.up.length - 1]) continue;
+      const suit = getCard(cardId).suit;
+      if (canPlaceOnFoundation(cardId, suit)) return { type: "tableau", col, idx: pile.ids.length - 1, cardId, targetType: "foundation", suit };
+    }
+
+    // 2. Puis les déplacements vers le tableau : défausse, colonnes, et fondations si utile.
+    if (wasteTop) {
+      const targetCol = findAutoTableauTarget(wasteTop);
+      if (targetCol !== null) return { type: "waste", cardId: wasteTop, targetType: "tableau", targetCol };
+    }
+
+    for (let col = 0; col < 7; col++) {
+      const pile = state.tableau[col];
+      for (let idx = 0; idx < pile.ids.length; idx++) {
+        if (!pile.up[idx]) continue;
+        const cardId = pile.ids[idx];
+        const targetCol = findAutoTableauTarget(cardId, col);
+        if (targetCol !== null) return { type: "tableau", col, idx, cardId, targetType: "tableau", targetCol };
+      }
+    }
+
+    for (const suit of SUITS) {
+      const cardId = topCard(state.foundations[suit]);
+      if (!cardId) continue;
+      const targetCol = findAutoTableauTarget(cardId);
+      if (targetCol !== null) return { type: "foundation", suit, cardId, targetType: "tableau", targetCol };
+    }
+
+    return null;
+  }
+
+  function giveHint() {
+    const move = findAnyHelpfulMove();
+    if (!move) {
+      state.selected = null;
+      setMessage("Aucun coup visible trouvé : essaie de tirer une carte ou de recycler le talon.");
+      return;
+    }
+
+    if (move.type === "waste") state.selected = { type: "waste" };
+    if (move.type === "foundation") state.selected = { type: "foundation", suit: move.suit };
+    if (move.type === "tableau") state.selected = { type: "tableau", col: move.col, idx: move.idx };
+    setMessage(`Coup de pouce : ${describeMoveSuggestion(move)}`);
   }
 
   function autoMoveSelected() {
@@ -462,6 +528,10 @@
     return `assets/cards/default/stock.png`;
   }
 
+  function emptyTableauAssetUrl() {
+    return `assets/cards/default/cartes-nuees-solidaire-PEUPLE.png`;
+  }
+
   function foundationAssetUrl(suit) {
     return `assets/cards/default/foundation_${suit}.png`;
   }
@@ -471,8 +541,8 @@
   }
 
   function applyOverlapSettings() {
-    const down = Number(overlapDownEl?.value ?? 90);
-    const up = Number(overlapUpEl?.value ?? 72);
+    const down = 92;
+    const up = 82;
     setCssVar("--overlap-down-percent", String(down));
     setCssVar("--overlap-up-percent", String(up));
     if (overlapDownValueEl) overlapDownValueEl.textContent = String(down);
@@ -586,8 +656,19 @@
     document.querySelectorAll(".dropzone-active").forEach(el => el.classList.remove("dropzone-active"));
   }
 
+  function buildStockSlot() {
+    const slot = document.createElement("div");
+    slot.className = "stock-slot";
+    const label = document.createElement("div");
+    label.className = "stock-label";
+    label.textContent = "PIOCHE";
+    slot.appendChild(label);
+    return slot;
+  }
+
   function renderStock() {
     stockEl.innerHTML = "";
+    const slot = buildStockSlot();
     if (state.stock.length) {
       const stack = document.createElement("div");
       stack.className = "stock-stack single-image";
@@ -605,14 +686,22 @@
       stockImg.onerror = () => stockImg.remove();
       top.appendChild(stockImg);
       stack.appendChild(top);
-      stockEl.appendChild(stack);
+      slot.appendChild(stack);
+      stockEl.appendChild(slot);
       return;
     }
     const recycle = document.createElement("div");
-    recycle.className = "recycle";
-    recycle.textContent = state.waste.length ? "↺" : "∅";
+    recycle.className = "recycle stock-empty";
+    recycle.setAttribute("aria-label", "Pioche vide");
+
+    const symbol = document.createElement("div");
+    symbol.className = "stock-empty-symbol";
+    symbol.textContent = state.waste.length ? "↺" : "∅";
+    recycle.appendChild(symbol);
+
     recycle.addEventListener("click", handleClickStock);
-    stockEl.appendChild(recycle);
+    slot.appendChild(recycle);
+    stockEl.appendChild(slot);
   }
 
   function renderWaste() {
@@ -624,12 +713,12 @@
     const visible = state.waste.slice(-Math.min(state.waste.length, state.drawCount));
     const fan = document.createElement("div");
     fan.className = "waste-fan";
-    fan.style.width = `${100 + (visible.length - 1) * 26}px`;
+    fan.style.width = `${100 + (visible.length - 1) * 8}px`;
     visible.forEach((cardId, index) => {
       const isTop = index === visible.length - 1;
       const layer = document.createElement("div");
       layer.className = `waste-layer ${isTop ? "top-layer" : "under-layer"}`;
-      layer.style.left = `${index * 26}px`;
+      layer.style.left = `${index * 8}px`;
       layer.appendChild(buildCardElement({
         cardId,
         faceUp: true,
@@ -691,8 +780,19 @@
 
       if (!pile.ids.length) {
         const empty = document.createElement("div");
-        empty.className = "tableau-empty";
-        empty.textContent = "K";
+        empty.className = "tableau-empty has-tableau-empty-image";
+        empty.setAttribute("aria-label", "Colonne vide");
+
+        const emptyImg = document.createElement("img");
+        emptyImg.className = "tableau-empty-image";
+        emptyImg.alt = "";
+        emptyImg.setAttribute("aria-hidden", "true");
+        emptyImg.decoding = "async";
+        emptyImg.src = emptyTableauAssetUrl();
+        emptyImg.draggable = false;
+        emptyImg.onerror = () => emptyImg.remove();
+        empty.appendChild(emptyImg);
+
         empty.dataset.drop = JSON.stringify({ targetType: "tableau", col });
         empty.addEventListener("click", () => handleClickTableau(col, null, true));
         wireDropzone(empty);
@@ -753,8 +853,16 @@
     }, 1000);
   }
 
+  function syncControlsForDifficulty() {
+    if (!difficultyEl || !drawCountEl) return;
+    if (difficultyEl.value === "easy") drawCountEl.value = "1";
+    drawCountEl.disabled = difficultyEl.value === "easy";
+  }
+
   function newGame() {
-    state = createState(Number(drawCountEl.value));
+    syncControlsForDifficulty();
+    state = createState(Number(drawCountEl.value), difficultyEl?.value || "normal");
+    if (state.difficulty === "easy") state.message = "Nouvelle partie en niveau facile : tirage 1 carte et davantage de cartes visibles.";
     render();
     startTimer();
   }
@@ -763,13 +871,22 @@
   overlapDownEl?.addEventListener("input", () => { applyOverlapSettings(); renderTableau(); });
   overlapUpEl?.addEventListener("input", () => { applyOverlapSettings(); renderTableau(); });
   drawCountEl.addEventListener("change", () => {
-    state = createState(Number(drawCountEl.value));
+    state = createState(Number(drawCountEl.value), difficultyEl?.value || "normal");
     state.message = `Nouvelle partie en mode tirage ${drawCountEl.value}`;
     render();
     startTimer();
   });
+  difficultyEl?.addEventListener("change", () => {
+    syncControlsForDifficulty();
+    state = createState(Number(drawCountEl.value), difficultyEl.value);
+    state.message = difficultyEl.value === "easy"
+      ? "Nouvelle partie en niveau facile : tirage 1 carte et davantage de cartes visibles."
+      : `Nouvelle partie en niveau normal : tirage ${drawCountEl.value} carte${drawCountEl.value === "1" ? "" : "s"}.`;
+    render();
+    startTimer();
+  });
   autoBtn.addEventListener("click", () => {
-    autoMoveSelected();
+    giveHint();
     updateAfterAction(false);
   });
   document.addEventListener("dragover", event => event.preventDefault());

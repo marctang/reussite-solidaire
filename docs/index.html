@@ -6,19 +6,39 @@
   <title>Réussite solidaire</title>
   <link rel="stylesheet" href="style.css" />
   <link rel="preload" as="image" href="assets/cards/default/stock.png" />
+  <link rel="preload" as="image" href="assets/cards/default/cartes-nuees-solidaire-PEUPLE.png" />
 </head>
 <body>
   <div class="page-wrap">
     <div class="shell">
       <header class="topbar">
         <section class="panel titlebox">
-          <h1 class="app-title">Réussite solidaire</h1>
-          <p class="subtitle">Version JavaScript statique, plus légère au chargement et pensée pour GitHub Pages.</p>
+          <h1 class="app-title">Ne jouez plus au Solitaire... <span>JOUEZ AU SOLIDAIRE !</span></h1>
+          <p class="subtitle">
+            Les humains bouleversent tout ? Remettez un peu d’ordre pour permettre à ces animaux de former leur équipe,
+            leur foule et enfin le peuple migrateur...
+          </p>
+          <p class="rules-text">
+            <strong>Règle du jeu :</strong> Organisez les cartes par ordre décroissant sur les 7 colonnes, en alternant
+            1 carte bleue/violette avec 1 carte rouge/orange, et ainsi de suite. Cliquez sur la carte puis sur son
+            emplacement d’arrivée, ou faites glisser. Si vous ne pouvez rien faire, piochez une carte. Lorsqu’un As
+            apparaît, mettez-le sur l’emplacement en haut et commencez la suite croissante dans sa couleur unique.
+            Quand une des colonnes du bas se libère, elle peut accueillir seulement un Peuple.
+          </p>
+          <p class="site-link"><a href="https://www.nuees.net" target="_blank" rel="noopener noreferrer">www.nuees.net</a></p>
         </section>
 
         <section class="panel controlbox">
           <div class="controls-grid">
             <button id="new-game-btn" type="button">Nouvelle partie</button>
+
+            <label>
+              Niveau
+              <select id="difficulty">
+                <option value="easy">Facile</option>
+                <option value="normal" selected>Normal</option>
+              </select>
+            </label>
 
             <label>
               Tirage
@@ -28,25 +48,12 @@
               </select>
             </label>
 
-            <button id="auto-btn" type="button">Mouvement auto</button>
-
-            <label>
-              Recouvrement cartes cachées
-              <input id="overlap-down" type="range" min="0" max="95" step="1" value="90" />
-              <span class="range-hint"><span id="overlap-down-value">90</span> %</span>
-            </label>
-
-            <label>
-              Recouvrement cartes visibles
-              <input id="overlap-up" type="range" min="0" max="95" step="1" value="72" />
-              <span class="range-hint"><span id="overlap-up-value">72</span> %</span>
-            </label>
+            <button id="auto-btn" type="button">Coup de pouce</button>
           </div>
 
           <p class="help-text">
-            Clique sur le talon pour tirer. Clique sur une carte puis sur une destination pour la déplacer.
-            Tu peux aussi glisser-déposer. Un second clic sur la même carte tente un déplacement automatique.
-            Les curseurs permettent de régler le recouvrement des cartes dans les colonnes.
+            Le bouton « Coup de pouce » sélectionne une carte jouable si tu ne vois plus quoi faire.
+            Le niveau facile retourne plus de cartes dès le départ et utilise le tirage 1 carte.
           </p>
         </section>
 
