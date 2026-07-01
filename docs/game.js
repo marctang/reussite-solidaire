@@ -64,7 +64,7 @@
     return copy;
   }
 
-  function createState(drawCount = 3, difficulty = "normal") {
+  function createState(drawCount = 1, difficulty = "normal") {
     const deck = makeDeck();
     const deckMap = Object.fromEntries(deck.map(card => [card.id, card]));
     const shuffled = shuffle(deck.map(c => c.id));
